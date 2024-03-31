@@ -46,7 +46,7 @@ class Renamer(DownloadClient):
             return f"{file_info.title} S{season}E{episode}.{file_info.language}{file_info.suffix}"
         elif method == "subtitle_advance":
             return f"{bangumi_name} S{season}E{episode}.{file_info.language}{file_info.suffix}"
-        elif method == "detailed_advance":
+        elif method == "subtitle_detailed":
             return f"{bangumi_name} S{season}E{episode} [{file_info.group}][{torrent_hash[:6]}].{file_info.language}{file_info.suffix}"
         else:
             logger.error(f"[Renamer] Unknown rename method: {method}")
