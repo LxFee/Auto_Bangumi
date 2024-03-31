@@ -25,7 +25,7 @@ class Renamer(DownloadClient):
 
     @staticmethod
     def gen_path(
-            file_info: EpisodeFile | SubtitleFile, bangumi_name: str, method: str
+            file_info: EpisodeFile | SubtitleFile, torrent_hash: str, bangumi_name: str, method: str
     ) -> str:
         season = f"0{file_info.season}" if file_info.season < 10 else file_info.season
         episode = (
@@ -37,6 +37,8 @@ class Renamer(DownloadClient):
             return f"{file_info.title} S{season}E{episode}{file_info.suffix}"
         elif method == "advance":
             return f"{bangumi_name} S{season}E{episode}{file_info.suffix}"
+        elif method == "detailed":
+            return f"{bangumi_name} S{season}E{episode}{file_info.suffix} [{file_info.group}][{torrent_hash[:6]}]"
         elif method == "normal":
             logger.warning("[Renamer] Normal rename method is deprecated.")
             return file_info.media_path
@@ -44,6 +46,8 @@ class Renamer(DownloadClient):
             return f"{file_info.title} S{season}E{episode}.{file_info.language}{file_info.suffix}"
         elif method == "subtitle_advance":
             return f"{bangumi_name} S{season}E{episode}.{file_info.language}{file_info.suffix}"
+        elif method == "detailed_advance":
+            return f"{bangumi_name} S{season}E{episode} [{file_info.group}][{torrent_hash[:6]}].{file_info.language}{file_info.suffix}"
         else:
             logger.error(f"[Renamer] Unknown rename method: {method}")
             return file_info.media_path
@@ -64,7 +68,7 @@ class Renamer(DownloadClient):
             season=season,
         )
         if ep:
-            new_path = self.gen_path(ep, bangumi_name, method=method)
+            new_path = self.gen_path(ep, _hash, bangumi_name, method=method)
             if media_path != new_path:
                 if new_path not in self.check_pool.keys():
                     if self.rename_torrent_file(
@@ -97,7 +101,7 @@ class Renamer(DownloadClient):
                     season=season,
                 )
                 if ep:
-                    new_path = self.gen_path(ep, bangumi_name, method=method)
+                    new_path = self.gen_path(ep, _hash, bangumi_name, method=method)
                     if media_path != new_path:
                         renamed = self.rename_torrent_file(
                             _hash=_hash, old_path=media_path, new_path=new_path
@@ -128,7 +132,7 @@ class Renamer(DownloadClient):
                 file_type="subtitle",
             )
             if sub:
-                new_path = self.gen_path(sub, bangumi_name, method=method)
+                new_path = self.gen_path(sub, _hash, bangumi_name, method=method)
                 if subtitle_path != new_path:
                     renamed = self.rename_torrent_file(
                         _hash=_hash, old_path=subtitle_path, new_path=new_path
