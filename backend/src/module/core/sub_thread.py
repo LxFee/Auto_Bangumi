@@ -29,6 +29,7 @@ class RSSThread(ProgramStatus):
                 engine.refresh_rss(client)
             if settings.bangumi_manage.eps_complete:
                 eps_complete()
+            self.wait_event.set()
             self.stop_event.wait(settings.program.rss_time)
 
     def rss_start(self):
@@ -56,6 +57,7 @@ class RenameThread(ProgramStatus):
 
     def rename_loop(self):
         while not self.stop_event.is_set():
+            self.wait_event.clear()
             with Renamer() as renamer:
                 renamed_info = renamer.rename()
             if settings.notification.enable:
@@ -63,7 +65,7 @@ class RenameThread(ProgramStatus):
                     for info in renamed_info:
                         notifier.send_msg(info)
                         time.sleep(2)
-            self.stop_event.wait(settings.program.rename_time)
+            self.wait_event.wait(settings.program.rename_time)
 
     def rename_start(self):
         self.rename_thread.start()

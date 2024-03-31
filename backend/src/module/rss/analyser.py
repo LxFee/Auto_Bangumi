@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 
 class RSSAnalyser(TitleParser):
     def official_title_parser(self, bangumi: Bangumi, rss: RSSItem, torrent: Torrent):
+        """
+        将初略解析出来的番剧信息通过解析器进一步解析为准确的番剧信息。
+        + mikan: 直接从mikan下载页信息获取番剧信息
+        + tmdb: 从tmdb获取番剧信息
+        + 其它: 不做处理，直接把初略解析的结果作为最终结果
+        """
         if rss.parser == "mikan":
             try:
                 bangumi.poster_link, bangumi.official_title = self.mikan_parser(
@@ -99,4 +105,3 @@ class RSSAnalyser(TitleParser):
             msg_en="Cannot parse this link.",
             msg_zh="无法解析此链接。",
         )
-
