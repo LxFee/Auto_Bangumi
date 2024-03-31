@@ -7,6 +7,7 @@ from .log import router as log_router
 from .program import router as program_router
 from .rss import router as rss_router
 from .search import router as search_router
+from .program import program
 
 __all__ = "v1"
 

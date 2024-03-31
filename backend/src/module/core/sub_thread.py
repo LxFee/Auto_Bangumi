@@ -29,7 +29,6 @@ class RSSThread(ProgramStatus):
                 engine.refresh_rss(client)
             if settings.bangumi_manage.eps_complete:
                 eps_complete()
-            self.wait_event.set()
             self.stop_event.wait(settings.program.rss_time)
 
     def rss_start(self):
@@ -51,6 +50,7 @@ class RSSThread(ProgramStatus):
 class RenameThread(ProgramStatus):
     def __init__(self):
         super().__init__()
+        self.wait_event = threading.Event()
         self._rename_thread = threading.Thread(
             target=self.rename_loop,
         )
@@ -72,7 +72,11 @@ class RenameThread(ProgramStatus):
 
     def rename_stop(self):
         if self._rename_thread.is_alive():
+            self.wait_event.set()
             self._rename_thread.join()
+
+    def do_rename_immediately(self):
+        self.wait_event.set()
 
     @property
     def rename_thread(self):

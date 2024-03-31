@@ -1,5 +1,6 @@
 import logging
 import time
+from module.api.program import program
 
 from qbittorrentapi import Client, LoginFailed
 from qbittorrentapi.exceptions import (
@@ -92,6 +93,7 @@ class QbDownloader:
             use_auto_torrent_management=False,
             content_layout="NoSubFolder"
         )
+        program.do_rename_immediately()
         return resp == "Ok."
 
     def torrents_delete(self, hash):
