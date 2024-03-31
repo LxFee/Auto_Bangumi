@@ -38,7 +38,7 @@ class Renamer(DownloadClient):
         elif method == "advance":
             return f"{bangumi_name} S{season}E{episode}{file_info.suffix}"
         elif method == "detailed":
-            return f"{bangumi_name} S{season}E{episode}{file_info.suffix} [{file_info.group}][{torrent_hash[:6]}]"
+            return f"{bangumi_name} S{season}E{episode} [{file_info.group}][{torrent_hash[:6]}]{file_info.suffix}"
         elif method == "normal":
             logger.warning("[Renamer] Normal rename method is deprecated.")
             return file_info.media_path
