@@ -72,7 +72,7 @@ def torrent_parser(
     for rule in RULES:
         if torrent_name:
             match_obj = re.match(rule, torrent_name, re.I)
-        else:
+        if not match_obj and media_path:
             match_obj = re.match(rule, media_path, re.I)
         if match_obj:
             group, title = get_group(match_obj.group(1))
