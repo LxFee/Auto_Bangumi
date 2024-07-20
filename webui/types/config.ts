@@ -16,7 +16,7 @@ export interface Config {
   };
   rss_parser: {
     enable: boolean;
-    type: 'mikan';
+    type: 'tmdb';
     token: string;
     custom_url: string;
     filter: Array<string>;
@@ -75,7 +75,7 @@ export const initConfig: Config = {
   },
   rss_parser: {
     enable: true,
-    type: 'mikan',
+    type: 'tmdb',
     token: '',
     custom_url: '',
     filter: [],
