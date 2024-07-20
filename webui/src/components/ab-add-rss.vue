@@ -13,7 +13,7 @@ const { t } = useMyI18n();
 
 const rss = ref<RSS>(rssTemplate);
 const rule = defineModel<BangumiRule>('rule', { default: ruleTemplate });
-const parserType = ['mikan', 'tmdb', 'parser'];
+const parserType = ['tmdb', 'mikan', 'parser'];
 
 const windowState = reactive({
   loading: false,
