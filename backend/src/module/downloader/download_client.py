@@ -99,7 +99,7 @@ class DownloadClient(TorrentPath):
             self.set_rule(info)
         logger.debug("[Downloader] Finished.")
 
-    def get_torrent_info(self, category="Bangumi", status_filter="completed", tag=None):
+    def get_torrent_info(self, category="Bangumi", status_filter=None, tag=None):
         return self.client.torrents_info(
             status_filter=status_filter, category=category, tag=tag
         )

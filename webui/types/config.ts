@@ -26,7 +26,7 @@ export interface Config {
   bangumi_manage: {
     enable: boolean;
     eps_complete: boolean;
-    rename_method: 'normal' | 'pn' | 'advance' | 'none';
+    rename_method: 'normal' | 'pn' | 'advance' | 'detailed' | 'none';
     group_tag: boolean;
     remove_bad_torrent: boolean;
   };
