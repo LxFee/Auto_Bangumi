@@ -22,8 +22,11 @@ class RSSAnalyser(TitleParser):
                 logger.warning("[Parser] Mikan torrent has no homepage info.")
                 pass
         elif rss.parser == "tmdb":
+            name = bangumi.official_title
+            if not rss.aggregate and rss.name:
+                name = rss.name
             tmdb_title, season, year, poster_link = self.tmdb_parser(
-                bangumi.official_title, bangumi.season, settings.rss_parser.language
+                name , bangumi.season, settings.rss_parser.language
             )
             bangumi.official_title = tmdb_title
             bangumi.year = year
