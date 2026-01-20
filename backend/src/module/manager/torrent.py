@@ -11,10 +11,12 @@ logger = logging.getLogger(__name__)
 class TorrentManager(Database):
     @staticmethod
     def __match_torrents_list(data: Bangumi | BangumiUpdate) -> list:
+        if data.id is None:
+            return []
         with DownloadClient() as client:
-            torrents = client.get_torrent_info(status_filter=None)
+            torrents = client.get_torrent_info(status_filter=None, tag=f"bgm_{data.id}")
         return [
-            torrent.hash for torrent in torrents if torrent.save_path == data.save_path
+            torrent.hash for torrent in torrents
         ]
 
     def delete_torrents(self, data: Bangumi, client: DownloadClient):

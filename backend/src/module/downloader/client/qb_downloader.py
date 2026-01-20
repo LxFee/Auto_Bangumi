@@ -82,7 +82,11 @@ class QbDownloader:
             status_filter=status_filter, category=category, tag=tag
         )
 
-    def add_torrents(self, torrent_urls, torrent_files, save_path, category):
+    def add_torrents(self, torrent_urls, torrent_files, save_path, category, bangumi_id):
+        tags = []
+        if bangumi_id is not None:
+            tags.append(f"bgm_{bangumi_id}")
+        
         resp = self._client.torrents_add(
             is_paused=False,
             urls=torrent_urls,
@@ -90,7 +94,8 @@ class QbDownloader:
             save_path=save_path,
             category=category,
             use_auto_torrent_management=False,
-            content_layout="NoSubFolder"
+            content_layout="NoSubFolder",
+            tags = tags
         )
         return resp == "Ok."
 

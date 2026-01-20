@@ -140,6 +140,7 @@ class DownloadClient(TorrentPath):
             torrent_files=torrent_file,
             save_path=bangumi.save_path,
             category="Bangumi",
+            bangumi_id=bangumi.id,
         ):
             logger.debug(f"[Downloader] Add torrent: {bangumi.official_title}")
             return True

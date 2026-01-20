@@ -5,6 +5,7 @@ from module.conf import settings
 from module.downloader import DownloadClient
 from module.models import EpisodeFile, Notification, SubtitleFile
 from module.parser import TitleParser
+from module.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,11 @@ class Renamer(DownloadClient):
 
     @staticmethod
     def gen_path(
-            file_info: EpisodeFile | SubtitleFile, torrent_hash: str, bangumi_name: str, method: str
+            file_info: EpisodeFile | SubtitleFile, torrent_hash: str, bangumi_name: str, method: str, offset: int
     ) -> str:
         season = f"0{file_info.season}" if file_info.season < 10 else file_info.season
         episode = (
-            f"0{file_info.episode}" if file_info.episode < 10 else file_info.episode
+            f"0{file_info.episode + offset}" if (file_info.episode + offset) < 10 else (file_info.episode + offset)
         )
         if method == "none" or method == "subtitle_none":
             return file_info.media_path
@@ -60,6 +61,7 @@ class Renamer(DownloadClient):
             method: str,
             season: int,
             _hash: str,
+            offset: int,
             **kwargs,
     ):
         ep = self._parser.torrent_parser(
@@ -68,7 +70,7 @@ class Renamer(DownloadClient):
             season=season,
         )
         if ep:
-            new_path = self.gen_path(ep, _hash, bangumi_name, method=method)
+            new_path = self.gen_path(ep, _hash, bangumi_name, method=method, offset=offset)
             if media_path != new_path:
                 if new_path not in self.check_pool.keys():
                     if self.rename_torrent_file(
@@ -92,6 +94,7 @@ class Renamer(DownloadClient):
             season: int,
             method: str,
             _hash: str,
+            offset: int,
             **kwargs,
     ):
         for media_path in media_list:
@@ -101,7 +104,7 @@ class Renamer(DownloadClient):
                     season=season,
                 )
                 if ep:
-                    new_path = self.gen_path(ep, _hash, bangumi_name, method=method)
+                    new_path = self.gen_path(ep, _hash, bangumi_name, method=method, offset=offset)
                     if media_path != new_path:
                         renamed = self.rename_torrent_file(
                             _hash=_hash, old_path=media_path, new_path=new_path
@@ -121,6 +124,7 @@ class Renamer(DownloadClient):
             season: int,
             method: str,
             _hash,
+            offset: int,
             **kwargs,
     ):
         method = "subtitle_" + method
@@ -132,13 +136,19 @@ class Renamer(DownloadClient):
                 file_type="subtitle",
             )
             if sub:
-                new_path = self.gen_path(sub, _hash, bangumi_name, method=method)
+                new_path = self.gen_path(sub, _hash, bangumi_name, method=method, offset=offset)
                 if subtitle_path != new_path:
                     renamed = self.rename_torrent_file(
                         _hash=_hash, old_path=subtitle_path, new_path=new_path
                     )
                     if not renamed:
                         logger.warning(f"[Renamer] {subtitle_path} rename failed")
+
+    def get_bgm_id(self, torrent):
+        tags = torrent.tags.split(', ')
+        for tag in tags:
+            if tag.startswith('bgm_'):
+                return int(tag[4:])
 
     def rename(self) -> list[Notification]:
         # Get torrent info
@@ -147,6 +157,13 @@ class Renamer(DownloadClient):
         torrents_info = self.get_torrent_info()
         renamed_info: list[Notification] = []
         for info in torrents_info:
+            bangumi_id = self.get_bgm_id(info)
+            offset = 0            
+            if bangumi_id:
+                with Database() as db:
+                    bangumi = db.bangumi.search_id(bangumi_id)
+                    offest = bangumi.offset if bangumi and bangumi.offset else 0
+            
             media_list, subtitle_list = self.check_files(info)
             bangumi_name, season = self._path_to_bangumi(info.save_path)
             kwargs = {
@@ -155,6 +172,7 @@ class Renamer(DownloadClient):
                 "method": rename_method,
                 "season": season,
                 "_hash": info.hash,
+                "offset": offest,
             }
             # Rename single media file
             if len(media_list) == 1:

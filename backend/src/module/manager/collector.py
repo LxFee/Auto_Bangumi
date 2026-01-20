@@ -25,8 +25,7 @@ class SeasonCollector(DownloadClient):
                 for torrent in torrents:
                     torrent.downloaded = True
                 bangumi.eps_collect = True
-                if engine.bangumi.update(bangumi):
-                    engine.bangumi.add(bangumi)
+                
                 engine.torrent.add_all(torrents)
                 return ResponseModel(
                     status=True,
@@ -56,8 +55,8 @@ class SeasonCollector(DownloadClient):
                 aggregate=False,
                 parser=parser,
             )
-            result = engine.download_bangumi(data)
             engine.bangumi.add(data)
+            result = engine.download_bangumi(data)
             return result
 
 
