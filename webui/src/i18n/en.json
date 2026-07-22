@@ -65,6 +65,37 @@
       "eps": "EPS complete",
       "group_tag": "Add Group Tag",
       "method": "Rename Method",
+      "custom_templates": "Custom Naming Templates",
+      "custom_bangumi_folder": "Anime Folder Template",
+      "custom_bangumi_file": "Anime File Template",
+      "custom_movie_folder": "Movie Folder Template",
+      "custom_movie_file": "Movie File Template",
+      "custom_help_aria": "Custom naming template help",
+      "custom_help": {
+        "fields_title": "Available fields",
+        "syntax_title": "Syntax and behavior",
+        "field": {
+          "title": "Media title",
+          "season": "Season number",
+          "episode": "Episode number",
+          "year": "Release year",
+          "group": "Subtitle group",
+          "hash": "First 6 characters of the torrent hash"
+        },
+        "rule": {
+          "direct": "Use a field directly.",
+          "zero_padding": "Zero padding is available only for season and episode.",
+          "wrapper": "Wrap a present value with any two characters.",
+          "wrapper_example": "Another wrapper example.",
+          "hash": "hash is shortened to 6 characters before wrapping.",
+          "missing": "A missing value and its wrappers are omitted; repeated spaces collapse.",
+          "invalid_padding": "Invalid: title cannot use zero padding.",
+          "invalid_combination": "Invalid: zero padding and wrappers cannot be combined.",
+          "extension": "File extensions are appended automatically and are not template fields.",
+          "folder_fields": "episode and hash are unavailable while a shared folder path is created; season is also unavailable for movie folders. Missing-field rules apply.",
+          "revision": "Putting hash in a file template creates different target paths; revision replacement only runs when target paths match."
+        }
+      },
       "revision_conflict_hint": "When replacement is enabled, the old torrent and its data are deleted only after the higher revision is promoted successfully.",
       "revision_conflict_hold": "Keep Existing File",
       "revision_conflict_policy": "Revision Conflict Policy",

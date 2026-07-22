@@ -22,13 +22,52 @@ withDefaults(
     delay: 400,
   }
 );
+const hovered = ref(false);
+const focused = ref(false);
+const pinned = ref(false);
+const visible = computed(() => hovered.value || focused.value || pinned.value);
+
+function togglePinned() {
+  if (pinned.value) {
+    close();
+  } else {
+    pinned.value = true;
+  }
+}
+
+function close() {
+  hovered.value = false;
+  focused.value = false;
+  pinned.value = false;
+}
 </script>
 
 <template>
-  <NTooltip :placement="placement" :delay="delay" trigger="hover">
+  <NTooltip
+    :show="visible"
+    :placement="placement"
+    :delay="delay"
+    trigger="manual"
+  >
     <template #trigger>
-      <slot />
+      <span
+        class="ab-tooltip-trigger"
+        @mouseenter="hovered = true"
+        @mouseleave="hovered = false"
+        @focusin="focused = true"
+        @focusout="focused = false"
+        @click="togglePinned"
+        @keydown.esc.stop="close"
+      >
+        <slot />
+      </span>
     </template>
     <slot name="content">{{ content }}</slot>
   </NTooltip>
 </template>
+
+<style scoped>
+.ab-tooltip-trigger {
+  display: inline-flex;
+}
+</style>

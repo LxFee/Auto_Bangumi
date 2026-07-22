@@ -10,6 +10,7 @@ import pytest
 from module.conf.config import Settings
 from module.conf.const import BCOLORS, DEFAULT_SETTINGS
 from module.models.config import (
+    BangumiManage,
     Config,
     Downloader,
     NotificationProvider,
@@ -70,6 +71,30 @@ class TestConfigDefaults:
         assert config.bangumi_manage.remove_bad_torrent is False
         assert config.bangumi_manage.revision_conflict_policy == "hold"
         assert config.bangumi_manage.eps_complete is False
+        assert (
+            config.bangumi_manage.custom_bangumi_folder
+            == "{title} {year:()}/Season {season}"
+        )
+        assert (
+            config.bangumi_manage.custom_bangumi_file
+            == "{title} S{season:02}E{episode:02}"
+        )
+        assert config.bangumi_manage.custom_movie_folder == "{title} {year:()}"
+        assert config.bangumi_manage.custom_movie_file == "{title} {year:()}"
+
+    def test_custom_file_templates_reject_invalid_formats(self):
+        with pytest.raises(ValueError, match="title does not support the 02 format"):
+            BangumiManage.model_validate({"custom_movie_file": "{title:02}"})
+
+    def test_old_manage_configuration_receives_custom_template_defaults(self):
+        manage = BangumiManage.model_validate(
+            {"enable": True, "rename_method": "pn", "group_tag": False}
+        )
+
+        assert manage.custom_bangumi_folder == "{title} {year:()}/Season {season}"
+        assert manage.custom_bangumi_file == "{title} S{season:02}E{episode:02}"
+        assert manage.custom_movie_folder == "{title} {year:()}"
+        assert manage.custom_movie_file == "{title} {year:()}"
 
     def test_proxy_defaults(self):
         """Proxy is disabled by default."""
@@ -619,6 +644,14 @@ class TestDefaultSettings:
 
     def test_revision_conflict_policy_defaults_to_hold(self):
         assert DEFAULT_SETTINGS["bangumi_manage"]["revision_conflict_policy"] == "hold"
+
+    def test_custom_templates_are_written_for_new_configurations(self):
+        manage = DEFAULT_SETTINGS["bangumi_manage"]
+
+        assert manage["custom_bangumi_folder"] == "{title} {year:()}/Season {season}"
+        assert manage["custom_bangumi_file"] == "{title} S{season:02}E{episode:02}"
+        assert manage["custom_movie_folder"] == "{title} {year:()}"
+        assert manage["custom_movie_file"] == "{title} {year:()}"
 
 
 # ---------------------------------------------------------------------------

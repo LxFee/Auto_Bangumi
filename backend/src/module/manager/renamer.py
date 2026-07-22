@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePath
 
@@ -19,6 +19,7 @@ from module.database.bangumi import (
 from module.downloader import DownloadClient, RenameOutcome, RenameResult
 from module.downloader.path import check_files, is_ep, path_to_bangumi
 from module.models import EpisodeFile, Notification, RenameOperation, SubtitleFile
+from module.naming import NamingContext, render_custom_name
 from module.notification import RenameConflictEvent
 from module.parser import TitleParser
 
@@ -117,6 +118,7 @@ class Renamer:
         method: str,
         episode_offset: int = 0,
         season_offset: int = 0,  # Kept for API compatibility, but no longer used
+        naming_context: NamingContext | None = None,
     ) -> str:
         # Season comes from the folder name which already includes the offset
         # (folder is now "Season {season + season_offset}")
@@ -131,6 +133,31 @@ class Renamer:
         # 否则升级后会触发整库批量重命名，破坏 Plex/Jellyfin 索引与硬链接
         if method == "none" or method == "subtitle_none":
             return file_info.media_path
+        if method in ("custom", "subtitle_custom"):
+            context = naming_context or NamingContext(
+                title=bangumi_name,
+                season=file_info.season,
+                group=file_info.group,
+            )
+            context = replace(
+                context,
+                season=(
+                    context.season if context.season is not None else file_info.season
+                ),
+                episode=Renamer._adjust_episode(file_info.episode, episode_offset),
+            )
+            template = (
+                settings.bangumi_manage.custom_movie_file
+                if file_info.episode_type == "movie"
+                else settings.bangumi_manage.custom_bangumi_file
+            )
+            suffix = file_info.suffix
+            if method == "subtitle_custom":
+                assert isinstance(
+                    file_info, SubtitleFile
+                ), "subtitle_custom requires a SubtitleFile"
+                suffix = f".{file_info.language}{suffix}"
+            return render_custom_name(template, context, suffix=suffix)
         # 注意：这里的 title/bangumi_name 来自已存在于磁盘上的文件/文件夹名
         # （单个路径分量，不可能含分隔符），不做保留字符清洗——追加清洗会让
         # 既有做种库（如含 ":" 的标题）在升级后被整库批量重命名 (#721 评审)
@@ -191,6 +218,7 @@ class Renamer:
         season_offset: int = 0,
         episode_type: str = "episode",
         existing_tags: str | None = None,
+        naming_context: NamingContext | None = None,
         **kwargs,
     ):
         report = await self._rename_media_file(
@@ -203,6 +231,7 @@ class Renamer:
             episode_offset=episode_offset,
             season_offset=season_offset,
             episode_type=episode_type,
+            naming_context=naming_context,
         )
         if report.result.succeeded and method not in ("none", "normal"):
             await self._mark_renamed(_hash, existing_tags)
@@ -219,6 +248,7 @@ class Renamer:
         episode_offset: int = 0,
         season_offset: int = 0,
         episode_type: str = "episode",
+        naming_context: NamingContext | None = None,
     ) -> PreparedMediaRename | None:
         ep = self._parser.torrent_parser(
             torrent_name=torrent_name,
@@ -228,6 +258,8 @@ class Renamer:
         )
         if ep is None:
             return None
+        if naming_context is not None and ep.group:
+            naming_context = replace(naming_context, group=ep.group)
         return PreparedMediaRename(
             episode=ep,
             source_path=media_path,
@@ -237,6 +269,7 @@ class Renamer:
                 method=method,
                 episode_offset=episode_offset,
                 season_offset=season_offset,
+                naming_context=naming_context,
             ),
         )
 
@@ -283,6 +316,7 @@ class Renamer:
         episode_offset: int = 0,
         season_offset: int = 0,
         episode_type: str = "episode",
+        naming_context: NamingContext | None = None,
     ) -> MediaRenameReport:
         prepared = self._prepare_media_rename(
             torrent_name=torrent_name,
@@ -293,6 +327,7 @@ class Renamer:
             episode_offset=episode_offset,
             season_offset=season_offset,
             episode_type=episode_type,
+            naming_context=naming_context,
         )
         if prepared is None:
             logger.warning("%s parse failed", media_path)
@@ -367,6 +402,7 @@ class Renamer:
         existing_tags: str | None = None,
         mark_complete: bool = True,
         torrent_info: dict | None = None,
+        naming_context: NamingContext | None = None,
         **kwargs,
     ):
         # 多文件电影种子（正片 + 特典/花絮）：所有文件会解析出同一标题，
@@ -394,6 +430,11 @@ class Renamer:
                         method=method,
                         episode_offset=episode_offset,
                         season_offset=season_offset,
+                        naming_context=(
+                            replace(naming_context, group=ep.group)
+                            if naming_context is not None and ep.group
+                            else naming_context
+                        ),
                     )
                     if (
                         movie_primary is not None
@@ -452,6 +493,7 @@ class Renamer:
         episode_offset: int = 0,
         season_offset: int = 0,
         episode_type: str = "episode",
+        naming_context: NamingContext | None = None,
         **kwargs,
     ):
         method = "subtitle_" + method
@@ -470,6 +512,11 @@ class Renamer:
                     method=method,
                     episode_offset=episode_offset,
                     season_offset=season_offset,
+                    naming_context=(
+                        replace(naming_context, group=sub.group)
+                        if naming_context is not None and sub.group
+                        else naming_context
+                    ),
                 )
                 if subtitle_path != new_path:
                     # Skip verification for subtitles to reduce latency
@@ -1336,6 +1383,7 @@ class Renamer:
         episode_offset: int,
         season_offset: int,
         episode_type: str,
+        naming_context: NamingContext | None = None,
     ) -> MediaRenameReport:
         prepared = self._prepare_media_rename(
             torrent_name=info["name"],
@@ -1346,6 +1394,7 @@ class Renamer:
             episode_offset=episode_offset,
             season_offset=season_offset,
             episode_type=episode_type,
+            naming_context=naming_context,
         )
         if prepared is None:
             logger.warning("%s parse failed", media_path)
@@ -1533,13 +1582,14 @@ class Renamer:
 
     async def _batch_lookup_offsets(
         self, torrents_info: list[dict]
-    ) -> dict[str, tuple[int, int, str]]:
+    ) -> dict[str, tuple]:
         """Batch lookup offsets for all torrents in a single database session.
 
-        Returns a dict mapping torrent_hash to
-        (episode_offset, season_offset, episode_type).
+        Returns a dict mapping torrent_hash to the legacy offset triple plus,
+        when a subscription is resolved, official naming metadata:
+        (episode_offset, season_offset, episode_type, title, year, group, season).
         """
-        result: dict[str, tuple[int, int, str]] = {}
+        result: dict[str, tuple] = {}
         if not torrents_info:
             return result
 
@@ -1588,6 +1638,10 @@ class Renamer:
                             b.episode_offset,
                             b.season_offset,
                             b.episode_type,
+                            b.official_title,
+                            b.year,
+                            b.group_name,
+                            b.season,
                         )
                         continue
 
@@ -1599,6 +1653,10 @@ class Renamer:
                             b.episode_offset,
                             b.season_offset,
                             b.episode_type,
+                            b.official_title,
+                            b.year,
+                            b.group_name,
+                            b.season,
                         )
                         continue
 
@@ -1633,6 +1691,10 @@ class Renamer:
                                 bangumi.episode_offset,
                                 bangumi.season_offset,
                                 bangumi.episode_type,
+                                bangumi.official_title,
+                                bangumi.year,
+                                bangumi.group_name,
+                                bangumi.season,
                             )
                         else:
                             # Default: no offset
@@ -1796,7 +1858,30 @@ class Renamer:
                 continue
             media_list, subtitle_list = check_files(files)
             bangumi_name, season = path_to_bangumi(save_path, torrent_name)
-            episode_offset, season_offset, episode_type = offset_map[torrent_hash]
+            resolved = offset_map[torrent_hash]
+            episode_offset, season_offset, episode_type = resolved[:3]
+            naming_context = None
+            if len(resolved) >= 7:
+                title, year, group, base_season = resolved[3:7]
+                effective_season = base_season + season_offset
+                min_season = 0 if episode_type == "special" else 1
+                if effective_season < min_season:
+                    effective_season = base_season
+                season = effective_season
+                bangumi_name = title
+                naming_context = NamingContext(
+                    title=title,
+                    season=effective_season,
+                    year=year,
+                    group=group,
+                    torrent_hash=torrent_hash,
+                )
+            elif rename_method == "custom":
+                naming_context = NamingContext(
+                    title=bangumi_name,
+                    season=season,
+                    torrent_hash=torrent_hash,
+                )
             kwargs = {
                 "torrent_name": torrent_name,
                 "bangumi_name": bangumi_name,
@@ -1807,6 +1892,7 @@ class Renamer:
                 "season_offset": season_offset,
                 "episode_type": episode_type,
                 "existing_tags": info.get("tags"),
+                "naming_context": naming_context,
             }
             if len(media_list) == 1:
                 report = await self._process_single_torrent(
@@ -1820,6 +1906,7 @@ class Renamer:
                     episode_offset=episode_offset,
                     season_offset=season_offset,
                     episode_type=episode_type,
+                    naming_context=naming_context,
                 )
                 if report.notification:
                     renamed_info.append(report.notification)

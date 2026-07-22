@@ -7,7 +7,7 @@ export type RssParserLang = ['zh', 'en', 'jp'];
 /** RSS 标题解析引擎（tokenizer 仍处于 Preview） */
 export type RssParserEngine = ['classic', 'tokenizer'];
 /** 重命名方式 */
-export type RenameMethod = ['normal', 'pn', 'advance', 'none'];
+export type RenameMethod = ['normal', 'pn', 'advance', 'custom', 'none'];
 /** 修订版文件名冲突处理策略 */
 export type RevisionConflictPolicy = ['hold', 'replace'];
 /** 代理类型 */
@@ -62,6 +62,10 @@ export interface BangumiManage {
   enable: boolean;
   eps_complete: boolean;
   rename_method: TupleToUnion<RenameMethod>;
+  custom_bangumi_folder: string;
+  custom_bangumi_file: string;
+  custom_movie_folder: string;
+  custom_movie_file: string;
   revision_conflict_policy: TupleToUnion<RevisionConflictPolicy>;
   group_tag: boolean;
   remove_bad_torrent: boolean;
@@ -203,6 +207,10 @@ export const initConfig: Config = {
     enable: true,
     eps_complete: true,
     rename_method: 'normal',
+    custom_bangumi_folder: '{title} {year:()}/Season {season}',
+    custom_bangumi_file: '{title} S{season:02}E{episode:02}',
+    custom_movie_folder: '{title} {year:()}',
+    custom_movie_file: '{title} {year:()}',
     revision_conflict_policy: 'hold',
     group_tag: true,
     remove_bad_torrent: true,

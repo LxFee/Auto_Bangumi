@@ -1,6 +1,6 @@
 # 文件重命名
 
-AB 目前提供三种重命名方式：`pn`、`advance` 和 `none`。
+AB 提供 `pn`、`advance`、`custom` 和 `none` 重命名方式。
 
 ### pn
 
@@ -26,6 +26,18 @@ AB 目前提供三种重命名方式：`pn`、`advance` 和 `none`。
 ### none
 
 不重命名。文件保持原样。
+
+### custom
+
+`custom` 分别使用番剧文件夹、番剧文件、电影文件夹和电影文件四个模板。可用字段和格式规则见[番剧管理设置](../config/manager.md#custom-模板字段)。
+
+默认番剧模板生成与标准整理方式相同的稳定路径：
+
+```text
+Frieren (2026)/Season 2/Frieren S02E03.mkv
+```
+
+如果文件模板包含 `hash`，V1/V2 通常会生成不同路径，因此不会触发同目标路径上的修订版替换。
 
 ## 收藏重命名
 

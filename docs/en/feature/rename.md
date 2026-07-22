@@ -1,6 +1,6 @@
 # File Renaming
 
-AB currently provides three renaming methods: `pn`, `advance`, and `none`.
+AB provides the `pn`, `advance`, `custom`, and `none` renaming methods.
 
 ### pn
 
@@ -26,6 +26,18 @@ Advanced renaming. This method uses the parent folder name for renaming.
 ### none
 
 No renaming. Files are left as-is.
+
+### custom
+
+`custom` uses four separate templates: anime folder, anime file, movie folder, and movie file. See [Bangumi Manager](../config/manager.md#custom-template-fields) for fields and syntax.
+
+The default anime templates preserve the standard stable layout:
+
+```text
+Frieren (2026)/Season 2/Frieren S02E03.mkv
+```
+
+When the file template contains `hash`, V1 and V2 normally resolve to different paths, so same-target revision replacement is not triggered.
 
 ## Collection Renaming
 
