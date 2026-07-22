@@ -203,7 +203,7 @@ class TestPosterCache:
         from module.searcher import searcher as searcher_module
 
         searcher_module._poster_cache["Test Anime"] = {
-            "zh": (None, "http://example.com/p.jpg")
+            "zh": (None, None, "http://example.com/p.jpg")
         }
         assert len(searcher_module._poster_cache) > 0
 
@@ -247,10 +247,12 @@ class TestSearchLocalization:
         raw_bangumi = make_bangumi(
             official_title="中文标题",
             title_raw="English Raw",
+            year=None,
             poster_link=None,
         )
         tmdb_info = SimpleNamespace(
             title="日本語タイトル",
+            year="2026",
             poster_link="https://image.tmdb.org/t/p/w780/poster.jpg",
         )
 
@@ -278,5 +280,6 @@ class TestSearchLocalization:
             ]
 
         assert results[0]["official_title"] == "日本語タイトル"
+        assert results[0]["year"] == "2026"
         assert results[0]["poster_link"] == tmdb_info.poster_link
         mock_tmdb_parser.assert_awaited_once_with("中文标题", "jp", test=True)
