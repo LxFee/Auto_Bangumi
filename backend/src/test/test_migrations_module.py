@@ -36,7 +36,10 @@ def _make_v0_engine():
                 "CREATE TABLE bangumi ("
                 "  id INTEGER PRIMARY KEY,"
                 "  official_title TEXT,"
+                "  year TEXT,"
                 "  title_raw TEXT,"
+                "  season INTEGER DEFAULT 1,"
+                "  poster_link TEXT,"
                 "  deleted BOOLEAN DEFAULT 0,"
                 "  offset INTEGER DEFAULT 0"
                 ")"
@@ -711,6 +714,75 @@ class TestRunMigrations:
 
         with engine.connect() as conn:
             assert get_schema_version(conn) == CURRENT_SCHEMA_VERSION
+
+    def test_v25_backfills_stable_groups_without_ambiguous_merges(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        engine = _make_v0_engine()
+        _run_through_version(engine, 24, monkeypatch)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO bangumi "
+                    "(id, official_title, title_raw, year, season, episode_type) "
+                    "VALUES "
+                    "(1, '尼古喵喵', 'Neko 01', '2026', 1, 'episode'),"
+                    "(2, '尼古喵喵', 'Neko 02', '2026', 1, 'episode'),"
+                    "(3, '尼古喵喵', 'Neko unknown', NULL, 1, 'episode'),"
+                    "(4, '尼古喵喵', 'Neko old', '2025', 1, 'episode'),"
+                    "(5, '另一部番剧', 'Other', '2024', 1, 'episode')"
+                )
+            )
+
+        run_migrations(engine)
+
+        inspector = inspect(engine)
+        assert {
+            "bangumi_group",
+            "bangumi_group_member",
+            "naming_plan",
+            "naming_plan_revision",
+            "naming_execution",
+        } <= set(inspector.get_table_names())
+        with engine.connect() as conn:
+            memberships = dict(
+                conn.execute(
+                    text(
+                        "SELECT rule_id, group_id FROM bangumi_group_member "
+                        "ORDER BY rule_id"
+                    )
+                ).all()
+            )
+            reviews = {
+                row.migration_key: (row.migration_review, row.reason)
+                for row in conn.execute(
+                    text(
+                        "SELECT migration_key, migration_review, "
+                        "migration_review_reason AS reason FROM bangumi_group"
+                    )
+                )
+            }
+            group_count = conn.execute(
+                text("SELECT COUNT(*) FROM bangumi_group")
+            ).scalar_one()
+
+        assert set(memberships) == {1, 2, 3, 4, 5}
+        assert memberships[1] == memberships[2]
+        assert memberships[3] not in {memberships[1], memberships[4]}
+        assert group_count == 4
+        assert reviews["rule:3"] == (1, "missing_year")
+        assert all(
+            review == (1, "conflicting_years")
+            for key, review in reviews.items()
+            if key.startswith("auto:尼古喵喵|")
+        )
+
+        run_migrations(engine)
+        with engine.connect() as conn:
+            assert (
+                conn.execute(text("SELECT COUNT(*) FROM bangumi_group")).scalar_one()
+                == 4
+            )
 
     def test_guard_skips_already_applied_migration(self):
         """A column created out-of-band must not make its migration fail."""

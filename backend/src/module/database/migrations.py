@@ -17,7 +17,19 @@ from pydantic_core import PydanticUndefined
 from sqlalchemy import Connection, Engine, inspect, text
 from sqlmodel import SQLModel
 
-from module.models import ApiToken, AuthSession, Bangumi, Movie, RenameOperation, User
+from module.models import (
+    ApiToken,
+    AuthSession,
+    Bangumi,
+    BangumiGroup,
+    BangumiGroupMember,
+    Movie,
+    NamingExecution,
+    NamingPlan,
+    NamingPlanRevision,
+    RenameOperation,
+    User,
+)
 from module.models.inbox import InboxMessage
 from module.models.llm_credential import LLMCredential
 from module.models.passkey import Passkey
@@ -39,6 +51,11 @@ TABLE_MODELS: list[type[SQLModel]] = [
     AuthSession,
     ApiToken,
     RenameOperation,
+    BangumiGroup,
+    BangumiGroupMember,
+    NamingPlan,
+    NamingPlanRevision,
+    NamingExecution,
 ]
 
 # already_applied 守卫：接收 inspector，返回该迁移是否已生效
@@ -76,6 +93,41 @@ def all_checks(*checks: AppliedCheck) -> AppliedCheck:
         return all(item(inspector) for item in checks)
 
     return check
+
+
+def bangumi_groups_backfilled(inspector) -> bool:
+    """Whether every legacy rule already has exactly one group membership."""
+    tables = set(inspector.get_table_names())
+    if "bangumi" not in tables:
+        # Some historical/test databases only contain an independent schema
+        # slice (for example auth).  There is no rule data to backfill.
+        return True
+    required_columns = {
+        "id",
+        "official_title",
+        "title_raw",
+        "year",
+        "season",
+        "episode_type",
+        "poster_link",
+        "air_weekday",
+    }
+    bangumi_columns = {column["name"] for column in inspector.get_columns("bangumi")}
+    if not required_columns <= bangumi_columns:
+        # A divergent partial schema cannot provide a trustworthy grouping
+        # key.  Create the new tables but leave data migration to explicit
+        # repair instead of guessing from incomplete rows.
+        return True
+    if not {"bangumi_group", "bangumi_group_member"} <= tables:
+        return False
+    missing = inspector.bind.execute(
+        text(
+            "SELECT 1 FROM bangumi AS b "
+            "LEFT JOIN bangumi_group_member AS m ON m.rule_id = b.id "
+            "WHERE m.rule_id IS NULL LIMIT 1"
+        )
+    ).first()
+    return missing is None
 
 
 @dataclass(frozen=True)
@@ -778,6 +830,449 @@ MIGRATIONS: tuple[Migration, ...] = (
             (
                 "ALTER TABLE aria2_gid ADD COLUMN rename_intent TEXT DEFAULT NULL",
                 column_exists("aria2_gid", "rename_intent"),
+            ),
+        ),
+    ),
+    Migration(
+        25,
+        "create stable bangumi groups and episode naming workbench state",
+        (
+            """CREATE TABLE IF NOT EXISTS bangumi_group (
+                id INTEGER PRIMARY KEY,
+                official_title VARCHAR NOT NULL,
+                year VARCHAR,
+                season INTEGER NOT NULL DEFAULT 1,
+                episode_type VARCHAR(32) NOT NULL DEFAULT 'episode',
+                poster_link VARCHAR,
+                air_weekday INTEGER,
+                migration_review BOOLEAN NOT NULL DEFAULT 0,
+                migration_review_reason VARCHAR,
+                migration_key VARCHAR,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT ck_bangumi_group_episode_type CHECK (
+                    episode_type IN ('episode', 'movie', 'special')
+                )
+            )""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_bangumi_group_migration_key "
+            "ON bangumi_group(migration_key)",
+            """CREATE TABLE IF NOT EXISTS bangumi_group_member (
+                rule_id INTEGER PRIMARY KEY REFERENCES bangumi(id),
+                group_id INTEGER NOT NULL REFERENCES bangumi_group(id),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_bangumi_group_member_group_id "
+            "ON bangumi_group_member(group_id)",
+            """CREATE TABLE IF NOT EXISTS naming_plan (
+                id INTEGER PRIMARY KEY,
+                group_id INTEGER NOT NULL REFERENCES bangumi_group(id),
+                rule_id INTEGER NOT NULL REFERENCES bangumi(id),
+                downloader_type VARCHAR(32) NOT NULL,
+                task_id VARCHAR NOT NULL,
+                file_index INTEGER NOT NULL,
+                file_kind VARCHAR(16) NOT NULL,
+                subtitle_of_id INTEGER REFERENCES naming_plan(id),
+                baseline_path VARCHAR NOT NULL,
+                current_path VARCHAR NOT NULL,
+                default_snapshot TEXT NOT NULL DEFAULT '{}',
+                manual_fields TEXT,
+                required_fields TEXT NOT NULL DEFAULT '[]',
+                target_path VARCHAR,
+                anomaly_reason TEXT,
+                origin VARCHAR(16) NOT NULL DEFAULT 'new',
+                discovery_state VARCHAR(16) NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT ck_naming_plan_file_kind CHECK (
+                    file_kind IN ('video', 'subtitle')
+                ),
+                CONSTRAINT ck_naming_plan_origin CHECK (
+                    origin IN ('new', 'legacy')
+                ),
+                CONSTRAINT ck_naming_plan_discovery_state CHECK (
+                    discovery_state IN ('active', 'missing')
+                )
+            )""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_naming_plan_file_identity "
+            "ON naming_plan(downloader_type, task_id, file_index)",
+            "CREATE INDEX IF NOT EXISTS ix_naming_plan_group_id "
+            "ON naming_plan(group_id)",
+            "CREATE INDEX IF NOT EXISTS ix_naming_plan_rule_id "
+            "ON naming_plan(rule_id)",
+            "CREATE INDEX IF NOT EXISTS ix_naming_plan_subtitle_of_id "
+            "ON naming_plan(subtitle_of_id)",
+            """CREATE TABLE IF NOT EXISTS naming_plan_revision (
+                id INTEGER PRIMARY KEY,
+                plan_id INTEGER NOT NULL REFERENCES naming_plan(id),
+                revision INTEGER NOT NULL,
+                state VARCHAR(16) NOT NULL DEFAULT 'draft',
+                field_snapshot TEXT NOT NULL DEFAULT '{}',
+                target_manifest TEXT NOT NULL DEFAULT '[]',
+                last_error TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP,
+                applied_at TIMESTAMP,
+                CONSTRAINT ck_naming_plan_revision_state CHECK (
+                    state IN ('draft', 'approved', 'running', 'retry', 'blocked',
+                              'applied', 'superseded')
+                )
+            )""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_naming_plan_revision_number "
+            "ON naming_plan_revision(plan_id, revision)",
+            "CREATE INDEX IF NOT EXISTS ix_naming_plan_revision_state "
+            "ON naming_plan_revision(state)",
+            """CREATE TABLE IF NOT EXISTS naming_execution (
+                plan_id INTEGER PRIMARY KEY REFERENCES naming_plan(id),
+                approved_revision_id INTEGER REFERENCES naming_plan_revision(id),
+                applied_revision_id INTEGER REFERENCES naming_plan_revision(id),
+                state VARCHAR(16) NOT NULL DEFAULT 'idle',
+                fence_token INTEGER NOT NULL DEFAULT 0,
+                lease_owner VARCHAR(64),
+                lease_expires_at TIMESTAMP,
+                retry_at TIMESTAMP,
+                last_error TEXT,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT ck_naming_execution_state CHECK (
+                    state IN ('idle', 'pending', 'running', 'retry', 'blocked', 'done')
+                ),
+                CONSTRAINT ck_naming_execution_fence_token CHECK (fence_token >= 0)
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_naming_execution_state_retry_at "
+            "ON naming_execution(state, retry_at)",
+            """INSERT OR IGNORE INTO bangumi_group (
+                official_title, year, season, episode_type, poster_link,
+                air_weekday, migration_review, migration_review_reason,
+                migration_key, created_at, updated_at
+            )
+            SELECT
+                MIN(COALESCE(NULLIF(TRIM(b.official_title), ''), b.title_raw)),
+                TRIM(b.year),
+                COALESCE(b.season, 1),
+                COALESCE(NULLIF(b.episode_type, ''), 'episode'),
+                MAX(b.poster_link),
+                MAX(b.air_weekday),
+                0,
+                NULL,
+                'auto:' || LOWER(TRIM(COALESCE(b.official_title, b.title_raw))) ||
+                    '|' || TRIM(b.year) ||
+                    '|' || COALESCE(b.season, 1) ||
+                    '|' || COALESCE(NULLIF(b.episode_type, ''), 'episode'),
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM bangumi AS b
+            WHERE b.year IS NOT NULL AND TRIM(b.year) <> ''
+            GROUP BY
+                LOWER(TRIM(COALESCE(b.official_title, b.title_raw))),
+                TRIM(b.year),
+                COALESCE(b.season, 1),
+                COALESCE(NULLIF(b.episode_type, ''), 'episode')""",
+            """INSERT OR IGNORE INTO bangumi_group (
+                official_title, year, season, episode_type, poster_link,
+                air_weekday, migration_review, migration_review_reason,
+                migration_key, created_at, updated_at
+            )
+            SELECT
+                COALESCE(NULLIF(TRIM(b.official_title), ''), b.title_raw),
+                NULLIF(TRIM(b.year), ''),
+                COALESCE(b.season, 1),
+                COALESCE(NULLIF(b.episode_type, ''), 'episode'),
+                b.poster_link,
+                b.air_weekday,
+                1,
+                'missing_year',
+                'rule:' || b.id,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM bangumi AS b
+            WHERE b.year IS NULL OR TRIM(b.year) = ''""",
+            """UPDATE bangumi_group AS g
+            SET migration_review = 1,
+                migration_review_reason = 'conflicting_years',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE g.migration_key LIKE 'auto:%'
+              AND EXISTS (
+                SELECT 1
+                FROM bangumi AS other
+                WHERE LOWER(TRIM(COALESCE(other.official_title, other.title_raw))) =
+                      LOWER(TRIM(g.official_title))
+                  AND COALESCE(other.season, 1) = g.season
+                  AND COALESCE(NULLIF(other.episode_type, ''), 'episode') =
+                      g.episode_type
+                  AND other.year IS NOT NULL
+                  AND TRIM(other.year) <> ''
+                  AND TRIM(other.year) <> g.year
+              )""",
+            """INSERT OR IGNORE INTO bangumi_group_member (
+                rule_id, group_id, created_at
+            )
+            SELECT b.id, g.id, CURRENT_TIMESTAMP
+            FROM bangumi AS b
+            JOIN bangumi_group AS g
+              ON g.migration_key = CASE
+                WHEN b.year IS NULL OR TRIM(b.year) = ''
+                  THEN 'rule:' || b.id
+                ELSE 'auto:' ||
+                  LOWER(TRIM(COALESCE(b.official_title, b.title_raw))) ||
+                  '|' || TRIM(b.year) ||
+                  '|' || COALESCE(b.season, 1) ||
+                  '|' || COALESCE(NULLIF(b.episode_type, ''), 'episode')
+              END""",
+        ),
+        all_checks(
+            table_exists("bangumi_group"),
+            table_exists("bangumi_group_member"),
+            table_exists("naming_plan"),
+            table_exists("naming_plan_revision"),
+            table_exists("naming_execution"),
+            index_exists("bangumi_group", "ux_bangumi_group_migration_key"),
+            index_exists("naming_plan", "ux_naming_plan_file_identity"),
+            index_exists("naming_plan_revision", "ux_naming_plan_revision_number"),
+            bangumi_groups_backfilled,
+        ),
+        (
+            (
+                """CREATE TABLE IF NOT EXISTS bangumi_group (
+                    id INTEGER PRIMARY KEY,
+                    official_title VARCHAR NOT NULL,
+                    year VARCHAR,
+                    season INTEGER NOT NULL DEFAULT 1,
+                    episode_type VARCHAR(32) NOT NULL DEFAULT 'episode',
+                    poster_link VARCHAR,
+                    air_weekday INTEGER,
+                    migration_review BOOLEAN NOT NULL DEFAULT 0,
+                    migration_review_reason VARCHAR,
+                    migration_key VARCHAR,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT ck_bangumi_group_episode_type CHECK (
+                        episode_type IN ('episode', 'movie', 'special')
+                    )
+                )""",
+                table_exists("bangumi_group"),
+            ),
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_bangumi_group_migration_key "
+                "ON bangumi_group(migration_key)",
+                index_exists("bangumi_group", "ux_bangumi_group_migration_key"),
+            ),
+            (
+                """CREATE TABLE IF NOT EXISTS bangumi_group_member (
+                    rule_id INTEGER PRIMARY KEY REFERENCES bangumi(id),
+                    group_id INTEGER NOT NULL REFERENCES bangumi_group(id),
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                table_exists("bangumi_group_member"),
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_bangumi_group_member_group_id "
+                "ON bangumi_group_member(group_id)",
+                index_exists(
+                    "bangumi_group_member", "ix_bangumi_group_member_group_id"
+                ),
+            ),
+            (
+                """CREATE TABLE IF NOT EXISTS naming_plan (
+                    id INTEGER PRIMARY KEY,
+                    group_id INTEGER NOT NULL REFERENCES bangumi_group(id),
+                    rule_id INTEGER NOT NULL REFERENCES bangumi(id),
+                    downloader_type VARCHAR(32) NOT NULL,
+                    task_id VARCHAR NOT NULL,
+                    file_index INTEGER NOT NULL,
+                    file_kind VARCHAR(16) NOT NULL,
+                    subtitle_of_id INTEGER REFERENCES naming_plan(id),
+                    baseline_path VARCHAR NOT NULL,
+                    current_path VARCHAR NOT NULL,
+                    default_snapshot TEXT NOT NULL DEFAULT '{}',
+                    manual_fields TEXT,
+                    required_fields TEXT NOT NULL DEFAULT '[]',
+                    target_path VARCHAR,
+                    anomaly_reason TEXT,
+                    origin VARCHAR(16) NOT NULL DEFAULT 'new',
+                    discovery_state VARCHAR(16) NOT NULL DEFAULT 'active',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT ck_naming_plan_file_kind CHECK (
+                        file_kind IN ('video', 'subtitle')
+                    ),
+                    CONSTRAINT ck_naming_plan_origin CHECK (
+                        origin IN ('new', 'legacy')
+                    ),
+                    CONSTRAINT ck_naming_plan_discovery_state CHECK (
+                        discovery_state IN ('active', 'missing')
+                    )
+                )""",
+                table_exists("naming_plan"),
+            ),
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_naming_plan_file_identity "
+                "ON naming_plan(downloader_type, task_id, file_index)",
+                index_exists("naming_plan", "ux_naming_plan_file_identity"),
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_naming_plan_group_id "
+                "ON naming_plan(group_id)",
+                index_exists("naming_plan", "ix_naming_plan_group_id"),
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_naming_plan_rule_id "
+                "ON naming_plan(rule_id)",
+                index_exists("naming_plan", "ix_naming_plan_rule_id"),
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_naming_plan_subtitle_of_id "
+                "ON naming_plan(subtitle_of_id)",
+                index_exists("naming_plan", "ix_naming_plan_subtitle_of_id"),
+            ),
+            (
+                """CREATE TABLE IF NOT EXISTS naming_plan_revision (
+                    id INTEGER PRIMARY KEY,
+                    plan_id INTEGER NOT NULL REFERENCES naming_plan(id),
+                    revision INTEGER NOT NULL,
+                    state VARCHAR(16) NOT NULL DEFAULT 'draft',
+                    field_snapshot TEXT NOT NULL DEFAULT '{}',
+                    target_manifest TEXT NOT NULL DEFAULT '[]',
+                    last_error TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    approved_at TIMESTAMP,
+                    applied_at TIMESTAMP,
+                    CONSTRAINT ck_naming_plan_revision_state CHECK (
+                        state IN ('draft', 'approved', 'running', 'retry', 'blocked',
+                                  'applied', 'superseded')
+                    )
+                )""",
+                table_exists("naming_plan_revision"),
+            ),
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_naming_plan_revision_number "
+                "ON naming_plan_revision(plan_id, revision)",
+                index_exists("naming_plan_revision", "ux_naming_plan_revision_number"),
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_naming_plan_revision_state "
+                "ON naming_plan_revision(state)",
+                index_exists("naming_plan_revision", "ix_naming_plan_revision_state"),
+            ),
+            (
+                """CREATE TABLE IF NOT EXISTS naming_execution (
+                    plan_id INTEGER PRIMARY KEY REFERENCES naming_plan(id),
+                    approved_revision_id INTEGER REFERENCES naming_plan_revision(id),
+                    applied_revision_id INTEGER REFERENCES naming_plan_revision(id),
+                    state VARCHAR(16) NOT NULL DEFAULT 'idle',
+                    fence_token INTEGER NOT NULL DEFAULT 0,
+                    lease_owner VARCHAR(64),
+                    lease_expires_at TIMESTAMP,
+                    retry_at TIMESTAMP,
+                    last_error TEXT,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT ck_naming_execution_state CHECK (
+                        state IN ('idle', 'pending', 'running', 'retry', 'blocked',
+                                  'done')
+                    ),
+                    CONSTRAINT ck_naming_execution_fence_token CHECK (
+                        fence_token >= 0
+                    )
+                )""",
+                table_exists("naming_execution"),
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_naming_execution_state_retry_at "
+                "ON naming_execution(state, retry_at)",
+                index_exists("naming_execution", "ix_naming_execution_state_retry_at"),
+            ),
+            (
+                """INSERT OR IGNORE INTO bangumi_group (
+                    official_title, year, season, episode_type, poster_link,
+                    air_weekday, migration_review, migration_review_reason,
+                    migration_key, created_at, updated_at
+                )
+                SELECT
+                    MIN(COALESCE(NULLIF(TRIM(b.official_title), ''), b.title_raw)),
+                    TRIM(b.year),
+                    COALESCE(b.season, 1),
+                    COALESCE(NULLIF(b.episode_type, ''), 'episode'),
+                    MAX(b.poster_link),
+                    MAX(b.air_weekday),
+                    0,
+                    NULL,
+                    'auto:' ||
+                        LOWER(TRIM(COALESCE(b.official_title, b.title_raw))) ||
+                        '|' || TRIM(b.year) ||
+                        '|' || COALESCE(b.season, 1) ||
+                        '|' || COALESCE(NULLIF(b.episode_type, ''), 'episode'),
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                FROM bangumi AS b
+                WHERE b.year IS NOT NULL AND TRIM(b.year) <> ''
+                GROUP BY
+                    LOWER(TRIM(COALESCE(b.official_title, b.title_raw))),
+                    TRIM(b.year),
+                    COALESCE(b.season, 1),
+                    COALESCE(NULLIF(b.episode_type, ''), 'episode')""",
+                bangumi_groups_backfilled,
+            ),
+            (
+                """INSERT OR IGNORE INTO bangumi_group (
+                    official_title, year, season, episode_type, poster_link,
+                    air_weekday, migration_review, migration_review_reason,
+                    migration_key, created_at, updated_at
+                )
+                SELECT
+                    COALESCE(NULLIF(TRIM(b.official_title), ''), b.title_raw),
+                    NULLIF(TRIM(b.year), ''),
+                    COALESCE(b.season, 1),
+                    COALESCE(NULLIF(b.episode_type, ''), 'episode'),
+                    b.poster_link,
+                    b.air_weekday,
+                    1,
+                    'missing_year',
+                    'rule:' || b.id,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                FROM bangumi AS b
+                WHERE b.year IS NULL OR TRIM(b.year) = ''""",
+                bangumi_groups_backfilled,
+            ),
+            (
+                """UPDATE bangumi_group AS g
+                SET migration_review = 1,
+                    migration_review_reason = 'conflicting_years',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE g.migration_key LIKE 'auto:%'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM bangumi AS other
+                    WHERE LOWER(
+                        TRIM(COALESCE(other.official_title, other.title_raw))
+                    ) = LOWER(TRIM(g.official_title))
+                      AND COALESCE(other.season, 1) = g.season
+                      AND COALESCE(
+                        NULLIF(other.episode_type, ''), 'episode'
+                      ) = g.episode_type
+                      AND other.year IS NOT NULL
+                      AND TRIM(other.year) <> ''
+                      AND TRIM(other.year) <> g.year
+                  )""",
+                bangumi_groups_backfilled,
+            ),
+            (
+                """INSERT OR IGNORE INTO bangumi_group_member (
+                    rule_id, group_id, created_at
+                )
+                SELECT b.id, g.id, CURRENT_TIMESTAMP
+                FROM bangumi AS b
+                JOIN bangumi_group AS g
+                  ON g.migration_key = CASE
+                    WHEN b.year IS NULL OR TRIM(b.year) = ''
+                      THEN 'rule:' || b.id
+                    ELSE 'auto:' ||
+                      LOWER(TRIM(COALESCE(b.official_title, b.title_raw))) ||
+                      '|' || TRIM(b.year) ||
+                      '|' || COALESCE(b.season, 1) ||
+                      '|' || COALESCE(
+                        NULLIF(b.episode_type, ''), 'episode'
+                      )
+                  END""",
+                bangumi_groups_backfilled,
             ),
         ),
     ),
