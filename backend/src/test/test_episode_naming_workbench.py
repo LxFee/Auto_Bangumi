@@ -6,6 +6,7 @@ import pytest
 from module.downloader import RenameOutcome, RenameResult
 from module.manager.episode_naming import (
     EpisodeNamingWorkbench,
+    GroupMetadataUpdate,
     NamingCorrection,
     ObservedFile,
     ObservedTask,
@@ -80,6 +81,51 @@ async def test_group_aggregates_rules_and_observed_episode_plans(
     assert video.target_path == "Neko/尼古喵喵 S01E02.mkv"
     assert subtitle.subtitle_of_id == video.id
     assert video.anomaly_reason is None
+
+
+@pytest.mark.asyncio
+async def test_switching_group_to_movie_rebuilds_plan_with_movie_template(
+    db_session, monkeypatch
+):
+    monkeypatch.setattr(
+        "module.manager.episode_naming.settings.bangumi_manage.rename_method",
+        "custom",
+    )
+    monkeypatch.setattr(
+        "module.manager.episode_naming.settings.bangumi_manage.custom_bangumi_file",
+        "{title} S{season:02}E{episode:02}",
+    )
+    monkeypatch.setattr(
+        "module.manager.episode_naming.settings.bangumi_manage.custom_movie_file",
+        "{title} {year:()} {group:[]} {hash:[]}",
+    )
+    item = rule("Look Back", "SweetSub")
+    item.official_title = "蓦然回首"
+    item.year = "2024"
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+    workbench = EpisodeNamingWorkbench(db_session)
+    detail = await workbench.observe_task(
+        ObservedTask(
+            downloader_type="qbittorrent",
+            task_id="movie1234567890",
+            rule_id=item.id,
+            torrent_name="[SweetSub] Look Back",
+            files=[ObservedFile(index=0, name="Look Back.mkv")],
+        )
+    )
+    plan = detail.plans[0]
+    assert plan.anomaly_reason == "缺少字段: episode"
+
+    await workbench.update_group(
+        detail.group.id, GroupMetadataUpdate(episode_type="movie")
+    )
+    await db_session.refresh(plan)
+
+    assert json.loads(plan.required_fields) == ["title", "year", "group", "hash"]
+    assert plan.target_path == "蓦然回首 (2024) [SweetSub] [movie1].mkv"
+    assert plan.anomaly_reason is None
 
 
 @pytest.mark.asyncio

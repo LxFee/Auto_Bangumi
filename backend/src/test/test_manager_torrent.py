@@ -7,8 +7,22 @@
 
 from unittest.mock import AsyncMock, patch
 
+from sqlmodel import col, select
+
 from module.database import Database
 from module.manager import TorrentManager
+from module.manager.episode_naming import (
+    EpisodeNamingWorkbench,
+    ObservedFile,
+    ObservedTask,
+)
+from module.models import (
+    BangumiGroup,
+    BangumiGroupMember,
+    NamingExecution,
+    NamingPlan,
+    NamingPlanRevision,
+)
 from test.factories import make_bangumi, make_rss_item
 
 SUB_URL = "https://mikanani.me/RSS/Bangumi?bangumiId=9&subgroupid=1"
@@ -22,6 +36,51 @@ async def _seed(db: Database, *, bangumi=(), rss=()):
 
 
 class TestDeleteRuleRSSCleanup:
+    async def test_delete_rule_removes_episode_naming_workbench_state(
+        self, db_engine
+    ):
+        async with Database(engine=db_engine) as db:
+            await _seed(
+                db,
+                bangumi=[
+                    make_bangumi(
+                        id=1,
+                        official_title="Look Back",
+                        title_raw="Look Back",
+                        group_name="SweetSub",
+                    )
+                ],
+            )
+            workbench = EpisodeNamingWorkbench(db.session)
+            detail = await workbench.observe_task(
+                ObservedTask(
+                    downloader_type="qbittorrent",
+                    task_id="delete-workbench-state",
+                    rule_id=1,
+                    torrent_name="[SweetSub] Look Back - 01",
+                    files=[ObservedFile(index=0, name="Look Back - 01.mkv")],
+                )
+            )
+            await workbench.approve(detail.plans[0].id)
+            group_id = detail.group.id
+            plan_id = detail.plans[0].id
+            assert group_id is not None
+            assert plan_id is not None
+
+            resp = await TorrentManager(db).delete_rule(1, file=False)
+
+            assert resp.status is True
+            assert await db.session.get(BangumiGroupMember, 1) is None
+            assert await db.session.get(NamingExecution, plan_id) is None
+            assert await db.session.get(NamingPlan, plan_id) is None
+            assert await db.session.get(BangumiGroup, group_id) is None
+            revision = await db.session.scalar(
+                select(NamingPlanRevision).where(
+                    col(NamingPlanRevision.plan_id) == plan_id
+                )
+            )
+            assert revision is None
+
     async def test_delete_rule_disables_orphan_sub_rss(self, db_engine):
         async with Database(engine=db_engine) as db:
             await _seed(

@@ -133,6 +133,16 @@ class EpisodeNamingWorkbench:
             return None
         rules = await self.repo.get_member_rules(group_id)
         plans = await self.repo.get_group_plans(group_id)
+        self._refresh_group_plans(group, rules, plans)
+        await self.session.commit()
+        return BangumiGroupDetail(group=group, rules=rules, plans=plans)
+
+    def _refresh_group_plans(
+        self,
+        group: BangumiGroup,
+        rules: list[Bangumi],
+        plans: list[NamingPlan],
+    ) -> None:
         rule_map = {rule.id: rule for rule in rules}
         plan_map = {plan.id: plan for plan in plans}
         for plan in plans:
@@ -144,8 +154,6 @@ class EpisodeNamingWorkbench:
                     self._refresh_subtitle_preview(
                         plan, plan_map.get(plan.subtitle_of_id), group, rule
                     )
-        await self.session.commit()
-        return BangumiGroupDetail(group=group, rules=rules, plans=plans)
 
     async def update_group(
         self, group_id: int, data: GroupMetadataUpdate
@@ -162,6 +170,9 @@ class EpisodeNamingWorkbench:
         group.migration_review = False
         group.migration_review_reason = None
         self.session.add(group)
+        rules = await self.repo.get_member_rules(group_id)
+        plans = await self.repo.get_group_plans(group_id)
+        self._refresh_group_plans(group, rules, plans)
         await self.session.commit()
         await self.session.refresh(group)
         return group
@@ -258,7 +269,7 @@ class EpisodeNamingWorkbench:
                     baseline_path=normalized,
                     current_path=normalized,
                     default_snapshot=self._dump(snapshot),
-                    required_fields=self._dump(self._required_fields()),
+                    required_fields=self._dump(self._required_fields(group)),
                     origin="legacy" if task.legacy else "new",
                 )
             else:
@@ -767,12 +778,20 @@ class EpisodeNamingWorkbench:
             "parsed_group": parsed.group if parsed else rule.group_name,
         }
 
-    def _required_fields(self) -> tuple[str, ...]:
+    @staticmethod
+    def _custom_file_template(group: BangumiGroup) -> str:
+        if group.episode_type == "movie":
+            return settings.bangumi_manage.custom_movie_file
+        return settings.bangumi_manage.custom_bangumi_file
+
+    def _required_fields(self, group: BangumiGroup) -> tuple[str, ...]:
         method = settings.bangumi_manage.rename_method
         if method == "custom":
-            return custom_template_fields(settings.bangumi_manage.custom_bangumi_file)
+            return custom_template_fields(self._custom_file_template(group))
         if method in ("none", "normal"):
             return ()
+        if group.episode_type == "movie":
+            return ("title",)
         return ("title", "season", "episode")
 
     def _effective_fields(self, plan: NamingPlan) -> dict[str, Any]:
@@ -789,7 +808,7 @@ class EpisodeNamingWorkbench:
     def _refresh_preview(
         self, plan: NamingPlan, group: BangumiGroup, rule: Bangumi
     ) -> None:
-        required = self._required_fields()
+        required = self._required_fields(group)
         plan.required_fields = self._dump(required)
         if plan.discovery_state == "missing":
             plan.anomaly_reason = "下载器中暂时找不到该任务"
@@ -821,7 +840,7 @@ class EpisodeNamingWorkbench:
                 target_name = PurePosixPath(plan.current_path).name
             elif settings.bangumi_manage.rename_method == "custom":
                 target_name = render_custom_name(
-                    settings.bangumi_manage.custom_bangumi_file,
+                    self._custom_file_template(group),
                     NamingContext(
                         title=str(context["title"]),
                         year=context["year"],
@@ -832,6 +851,11 @@ class EpisodeNamingWorkbench:
                     ),
                     suffix=suffix,
                 )
+            elif group.episode_type == "movie":
+                movie_title = str(context["title"])
+                if context["year"]:
+                    movie_title = f"{movie_title} ({context['year']})"
+                target_name = f"{movie_title}{suffix}"
             else:
                 target_name = f"{context['title']} S{int(context['season']):02}E{self._format_episode(context['episode'])}{suffix}"
         except (NamingTemplateError, TypeError, ValueError) as error:
