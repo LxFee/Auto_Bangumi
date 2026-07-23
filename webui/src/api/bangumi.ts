@@ -1,15 +1,100 @@
 import { omit } from 'radash';
 import type {
   BangumiAPI,
+  BangumiGroup,
+  BangumiGroupDetail,
+  BangumiGroupSummary,
   BangumiRule,
   DetectOffsetRequest,
   DetectOffsetResponse,
+  NamingPlan,
+  NamingPlanRevision,
   OffsetSuggestion,
 } from '#/bangumi';
 import type { ApiSuccess } from '#/api';
 import type { Torrent } from '#/torrent';
 
 export const apiBangumi = {
+  async getGroups() {
+    const { data } = await axios.get<BangumiGroupSummary[]>(
+      'api/v1/bangumi-groups'
+    );
+    return data;
+  },
+
+  async getGroupForRule(ruleId: number) {
+    const { data } = await axios.get<BangumiGroup>(
+      `api/v1/bangumi-groups/by-rule/${ruleId}`
+    );
+    return data;
+  },
+
+  async getGroup(groupId: number) {
+    const { data } = await axios.get<BangumiGroupDetail>(
+      `api/v1/bangumi-groups/${groupId}`
+    );
+    return data;
+  },
+
+  async refreshGroup(groupId: number) {
+    const { data } = await axios.post<BangumiGroupDetail>(
+      `api/v1/bangumi-groups/${groupId}/refresh`
+    );
+    return data;
+  },
+
+  async updateGroup(
+    groupId: number,
+    fields: Partial<
+      Pick<BangumiGroup, 'official_title' | 'year' | 'season' | 'episode_type'>
+    >
+  ) {
+    const { data } = await axios.patch<BangumiGroup>(
+      `api/v1/bangumi-groups/${groupId}`,
+      fields
+    );
+    return data;
+  },
+
+  async correctNamingPlan(
+    planId: number,
+    fields: Record<string, string | number | null>
+  ) {
+    const { data } = await axios.patch<NamingPlan>(
+      `api/v1/bangumi-groups/plans/${planId}`,
+      { fields }
+    );
+    return data;
+  },
+
+  async restoreNamingPlan(planId: number) {
+    const { data } = await axios.post<NamingPlan>(
+      `api/v1/bangumi-groups/plans/${planId}/restore`
+    );
+    return data;
+  },
+
+  async reparseNamingPlan(planId: number) {
+    const { data } = await axios.post<NamingPlan>(
+      `api/v1/bangumi-groups/plans/${planId}/reparse`
+    );
+    return data;
+  },
+
+  async associateSubtitle(subtitleId: number, videoPlanId: number | null) {
+    const { data } = await axios.put<NamingPlan>(
+      `api/v1/bangumi-groups/subtitles/${subtitleId}/association`,
+      { video_plan_id: videoPlanId }
+    );
+    return data;
+  },
+
+  async applyNamingPlan(planId: number) {
+    const { data } = await axios.post<NamingPlanRevision>(
+      `api/v1/bangumi-groups/plans/${planId}/apply`
+    );
+    return data;
+  },
   /**
    * 获取所有 bangumi 数据
    * @returns 所有 bangumi 数据

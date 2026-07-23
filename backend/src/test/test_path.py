@@ -7,6 +7,7 @@ from module.downloader.path import (
     file_depth,
     gen_save_path,
     is_ep,
+    join_path,
     path_to_bangumi,
     rule_name,
     sanitize_path_fragment,
@@ -61,6 +62,21 @@ class TestGenSavePath:
         assert "My Anime (2024)" in result
         assert "Season 2" in result
 
+    def test_custom_bangumi_folder_uses_episodic_template(self):
+        bangumi = make_bangumi(
+            official_title="Frieren", year="2026", season=2, group_name="Sousou"
+        )
+        with patch("module.downloader.path.settings") as mock_settings:
+            mock_settings.downloader.path = "/downloads/Bangumi"
+            mock_settings.bangumi_manage.rename_method = "custom"
+            mock_settings.bangumi_manage.custom_bangumi_folder = (
+                "{group:[]}/{title} {year:()}/S{season:02}"
+            )
+
+            result = gen_save_path(bangumi)
+
+        assert result == "/downloads/Bangumi/[Sousou]/Frieren (2026)/S02"
+
     def test_reserved_characters_sanitized_in_folder(self):
         """标题里的保留字符不能把保存路径拆成多级目录 (#721)。"""
         bangumi = make_bangumi(official_title="Fate/Zero: Part?2", year="2024")
@@ -113,6 +129,26 @@ class TestGenSavePath:
 
         assert result == "/downloads/Bangumi/天气之子 (2019)"
         assert "Season" not in result
+
+    def test_custom_movie_folder_is_separate_from_bangumi_template(self):
+        movie = make_bangumi(
+            official_title="Weathering With You",
+            year="2019",
+            group_name="Lilith-Raws",
+            episode_type="movie",
+        )
+        with patch("module.downloader.path.settings") as mock_settings:
+            mock_settings.downloader.path = "/downloads/Bangumi"
+            mock_settings.bangumi_manage.rename_method = "custom"
+            mock_settings.bangumi_manage.custom_movie_folder = (
+                "Movies/{title} {year:[]} {group:()}"
+            )
+
+            result = gen_save_path(movie)
+
+        assert result == (
+            "/downloads/Bangumi/Movies/Weathering With You [2019] (Lilith-Raws)"
+        )
 
     def test_special_uses_season_zero(self):
         """Specials/OVA/OAD (season=0) land in Season 0, Jellyfin/Plex convention."""

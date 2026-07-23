@@ -20,11 +20,23 @@ class TestSearchUrl:
     def mock_search_config(self):
         """Ensure SEARCH_CONFIG has default providers."""
         config = {
-            "mikan": "https://mikanani.me/RSS/Search?searchstr=%s",
-            "nyaa": "https://nyaa.si/?page=rss&q=%s&c=0_0&f=0",
-            "dmhy": "http://dmhy.org/topics/rss/rss.xml?keyword=%s",
+            "mikan": {
+                "url": "https://mikanani.me/RSS/Search?searchstr=%s",
+                "parser": "mikan",
+            },
+            "nyaa": {
+                "url": "https://nyaa.si/?page=rss&q=%s&c=0_0&f=0",
+                "parser": "tmdb",
+            },
+            "dmhy": {
+                "url": "http://dmhy.org/topics/rss/rss.xml?keyword=%s",
+                "parser": "tmdb",
+            },
         }
-        with patch("module.searcher.provider.SEARCH_CONFIG", config):
+        # search_url() calls get_provider(), whose authoritative state lives
+        # in module.conf.search_provider. Patching the compatibility re-export
+        # made this test depend on the user's local provider configuration.
+        with patch("module.conf.search_provider.SEARCH_CONFIG", config):
             yield
 
     def test_mikan_url(self):
@@ -203,7 +215,7 @@ class TestPosterCache:
         from module.searcher import searcher as searcher_module
 
         searcher_module._poster_cache["Test Anime"] = {
-            "zh": (None, "http://example.com/p.jpg")
+            "zh": (None, None, "http://example.com/p.jpg")
         }
         assert len(searcher_module._poster_cache) > 0
 
@@ -247,10 +259,12 @@ class TestSearchLocalization:
         raw_bangumi = make_bangumi(
             official_title="中文标题",
             title_raw="English Raw",
+            year=None,
             poster_link=None,
         )
         tmdb_info = SimpleNamespace(
             title="日本語タイトル",
+            year="2026",
             poster_link="https://image.tmdb.org/t/p/w780/poster.jpg",
         )
 
@@ -278,5 +292,6 @@ class TestSearchLocalization:
             ]
 
         assert results[0]["official_title"] == "日本語タイトル"
+        assert results[0]["year"] == "2026"
         assert results[0]["poster_link"] == tmdb_info.poster_link
         mock_tmdb_parser.assert_awaited_once_with("中文标题", "jp", test=True)

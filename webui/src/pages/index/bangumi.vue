@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { BangumiRule } from '#/bangumi';
+import type { BangumiGroupSummary, BangumiRule } from '#/bangumi';
 
 definePage({
   name: 'Bangumi List',
@@ -18,10 +18,18 @@ const { getAll, openEditPopup } = useBangumiStore();
 const { openAddRss } = useAddRss();
 
 // Show skeleton when initially loading (not yet loaded and loading)
-const showSkeleton = computed(() => !hasLoaded.value && isLoading.value);
+const stableGroupsLoaded = ref(false);
+const stableGroupsLoading = ref(false);
+const groupLoadFailed = ref(false);
+const showSkeleton = computed(
+  () =>
+    (!hasLoaded.value && isLoading.value) ||
+    (!stableGroupsLoaded.value && stableGroupsLoading.value)
+);
 const skeletonCount = 8; // Number of skeleton cards to show
 
 const refreshing = ref(false);
+const stableGroups = ref<BangumiGroupSummary[]>([]);
 
 // Orphan torrents count for the Others card
 const orphanCount = ref(0);
@@ -43,7 +51,7 @@ function goToOrphans() {
 async function onRefresh() {
   refreshing.value = true;
   try {
-    await Promise.all([getAll(), loadOrphanCount()]);
+    await Promise.all([getAll(), loadOrphanCount(), loadStableGroups()]);
   } finally {
     refreshing.value = false;
   }
@@ -52,55 +60,60 @@ async function onRefresh() {
 onActivated(() => {
   getAll();
   loadOrphanCount();
+  loadStableGroups();
 });
 
-// Group bangumi by official_title + season
-interface BangumiGroup {
-  key: string;
+interface BangumiCardGroup {
+  id: number;
   primary: BangumiRule;
   rules: BangumiRule[];
 }
 
-function groupBangumi(items: BangumiRule[]): BangumiGroup[] {
-  if (!items) return [];
-  const map = new Map<string, BangumiRule[]>();
-  for (const item of items) {
-    const key = `${item.official_title}::${item.season}`;
-    if (!map.has(key)) {
-      map.set(key, []);
-    }
-    map.get(key)!.push(item);
+async function loadStableGroups() {
+  stableGroupsLoading.value = true;
+  try {
+    stableGroups.value = await apiBangumi.getGroups();
+    stableGroupsLoaded.value = true;
+    groupLoadFailed.value = false;
+  } catch {
+    groupLoadFailed.value = true;
+  } finally {
+    stableGroupsLoading.value = false;
   }
-  const groups: BangumiGroup[] = [];
-  for (const [key, rules] of map) {
-    groups.push({ key, primary: rules[0], rules });
+}
+
+function groupBangumi(items: BangumiRule[]): BangumiCardGroup[] {
+  const itemMap = new Map(items.map((item) => [item.id, item]));
+  const groups: BangumiCardGroup[] = [];
+  for (const summary of stableGroups.value) {
+    const rules = summary.rule_ids
+      .map((id) => itemMap.get(id))
+      .filter((item): item is BangumiRule => Boolean(item));
+    if (rules.length) {
+      groups.push({ id: summary.group.id, primary: rules[0], rules });
+    }
   }
   return groups;
 }
 
-const groupedBangumi = computed<BangumiGroup[]>(() =>
+const groupedBangumi = computed<BangumiCardGroup[]>(() =>
   groupBangumi(activeBangumi.value)
 );
-const groupedArchivedBangumi = computed<BangumiGroup[]>(() =>
+const groupedArchivedBangumi = computed<BangumiCardGroup[]>(() =>
   groupBangumi(archivedBangumi.value)
 );
 
 // Rule list popup state
 const ruleListPopup = reactive<{
   show: boolean;
-  group: BangumiGroup | null;
+  group: BangumiCardGroup | null;
 }>({
   show: false,
   group: null,
 });
 
-function onCardClick(group: BangumiGroup) {
-  if (group.rules.length === 1) {
-    openEditPopup(group.primary);
-  } else {
-    ruleListPopup.group = group;
-    ruleListPopup.show = true;
-  }
+function onCardClick(group: BangumiCardGroup) {
+  router.push(`/bangumi-torrents/${group.id}`);
 }
 
 function onRuleSelect(rule: BangumiRule) {
@@ -109,7 +122,7 @@ function onRuleSelect(rule: BangumiRule) {
 }
 
 // Check if any rule in group needs review
-function groupNeedsReview(group: BangumiGroup): boolean {
+function groupNeedsReview(group: BangumiCardGroup): boolean {
   return group.rules.some((r) => r.needs_review);
 }
 </script>
@@ -130,7 +143,10 @@ function groupNeedsReview(group: BangumiGroup): boolean {
       </div>
 
       <!-- Failed first load — distinct from an empty library -->
-      <div v-else-if="loadFailed && !hasLoaded" class="empty-guide load-failed">
+      <div
+        v-else-if="(loadFailed && !hasLoaded) || groupLoadFailed"
+        class="empty-guide load-failed"
+      >
         <div class="empty-guide-header">
           <div class="empty-guide-title">
             {{ $t('homepage.load_failed.title') }}
@@ -139,7 +155,7 @@ function groupNeedsReview(group: BangumiGroup): boolean {
             {{ $t('homepage.load_failed.subtitle') }}
           </div>
         </div>
-        <ab-button variant="primary" :loading="isLoading" @click="getAll">
+        <ab-button variant="primary" :loading="refreshing" @click="onRefresh">
           {{ $t('homepage.load_failed.retry') }}
         </ab-button>
       </div>
@@ -203,7 +219,7 @@ function groupNeedsReview(group: BangumiGroup): boolean {
         <transition-group name="bangumi" tag="div" class="bangumi-grid">
           <div
             v-for="group in groupedBangumi"
-            :key="group.key"
+            :key="group.id"
             class="bangumi-group-wrapper"
             :class="[group.rules.every((r) => r.deleted) && 'grayscale']"
           >
@@ -279,7 +295,7 @@ function groupNeedsReview(group: BangumiGroup): boolean {
           >
             <div
               v-for="group in groupedArchivedBangumi"
-              :key="group.key"
+              :key="group.id"
               class="bangumi-group-wrapper archived-item"
             >
               <ab-bangumi-card
@@ -463,7 +479,8 @@ function groupNeedsReview(group: BangumiGroup): boolean {
   justify-content: center;
   background: var(--color-surface-hover);
   border: 2px dashed var(--color-border);
-  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+  transition: box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 
   .others-card:hover &,
   .others-card:focus-visible & {

@@ -37,6 +37,67 @@ export interface BangumiAPI extends Omit<BangumiRule, 'filter' | 'rss_link'> {
   rss_link: string;
 }
 
+export interface BangumiGroup {
+  id: number;
+  official_title: string;
+  year: string | null;
+  season: number;
+  episode_type: 'episode' | 'movie' | 'special';
+  poster_link: string | null;
+  air_weekday: number | null;
+  migration_review: boolean;
+  migration_review_reason: string | null;
+}
+
+export interface BangumiGroupSummary {
+  group: BangumiGroup;
+  rule_ids: number[];
+  rule_count: number;
+  plan_count: number;
+  anomaly_count: number;
+}
+
+export interface NamingPlan {
+  id: number;
+  group_id: number;
+  rule_id: number;
+  downloader_type: string;
+  task_id: string;
+  file_index: number;
+  file_kind: 'video' | 'subtitle';
+  subtitle_of_id: number | null;
+  baseline_path: string;
+  current_path: string;
+  default_snapshot: string;
+  manual_fields: string | null;
+  required_fields: string;
+  target_path: string | null;
+  anomaly_reason: string | null;
+  origin: 'new' | 'legacy';
+  discovery_state: 'active' | 'missing';
+}
+
+export interface BangumiGroupDetail {
+  group: BangumiGroup;
+  rules: BangumiAPI[];
+  plans: NamingPlan[];
+}
+
+export interface NamingPlanRevision {
+  id: number;
+  plan_id: number;
+  revision: number;
+  state:
+    | 'draft'
+    | 'approved'
+    | 'running'
+    | 'retry'
+    | 'blocked'
+    | 'applied'
+    | 'superseded';
+  last_error: string | null;
+}
+
 export interface SearchResult {
   order: number;
   value: BangumiRule;

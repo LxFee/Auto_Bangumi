@@ -3,6 +3,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from module.naming import validate_custom_template
+
 
 def _expand(value: str | None) -> str:
     """Expand shell environment variables in *value*, returning empty string for None."""
@@ -69,6 +71,22 @@ class BangumiManage(BaseModel):
     enable: bool = Field(default=True, description="Enable bangumi manage")
     eps_complete: bool = Field(default=False, description="Enable eps complete")
     rename_method: str = Field(default="pn", description="Rename method")
+    custom_bangumi_folder: str = Field(
+        default="{title} {year:()}/Season {season}",
+        description="Custom folder template for episodic media",
+    )
+    custom_bangumi_file: str = Field(
+        default="{title} S{season:02}E{episode:02}",
+        description="Custom file template for episodic media",
+    )
+    custom_movie_folder: str = Field(
+        default="{title} {year:()}",
+        description="Custom folder template for movies",
+    )
+    custom_movie_file: str = Field(
+        default="{title} {year:()}",
+        description="Custom file template for movies",
+    )
     group_tag: bool = Field(default=False, description="Enable group tag")
     remove_bad_torrent: bool = Field(default=False, description="Remove bad torrent")
     revision_conflict_policy: Literal["hold", "replace"] = Field(
@@ -80,6 +98,16 @@ class BangumiManage(BaseModel):
     track_orphans: bool = Field(
         default=True, description="Persist unmatched (orphan) torrents"
     )
+
+    @field_validator("custom_bangumi_folder", "custom_movie_folder")
+    @classmethod
+    def validate_custom_folder_template(cls, value: str) -> str:
+        return validate_custom_template(value, allow_path=True)
+
+    @field_validator("custom_bangumi_file", "custom_movie_file")
+    @classmethod
+    def validate_custom_file_template(cls, value: str) -> str:
+        return validate_custom_template(value)
 
 
 class Log(BaseModel):

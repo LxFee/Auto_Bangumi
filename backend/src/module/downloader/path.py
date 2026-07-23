@@ -6,6 +6,7 @@ from pathlib import PureWindowsPath
 from module.conf import PLATFORM, settings
 from module.models import Bangumi, BangumiUpdate
 from module.models.movie import Movie, MovieUpdate
+from module.naming import NamingContext, NamingTemplateError, render_custom_name
 
 logger = logging.getLogger(__name__)
 
@@ -98,28 +99,52 @@ def gen_save_path(data: Bangumi | BangumiUpdate | Movie | MovieUpdate) -> str:
     specials/OVA/OAD land in "Season 0" (Jellyfin/Plex convention) instead of
     being interleaved with regular episodes.
     """
-    folder = _media_folder(data)
     episode_type = getattr(data, "episode_type", "episode")
-    if isinstance(data, (Movie, MovieUpdate)) or episode_type == "movie":
+    is_movie = isinstance(data, (Movie, MovieUpdate)) or episode_type == "movie"
+    base_season = getattr(data, "season", 1)
+    adjusted_season = base_season + getattr(data, "season_offset", 0)
+    if not is_movie:
+        # 季号下限：普通剧集最小为 1——偏移到 Season 0 会被 Plex/Jellyfin 当作
+        # 特别篇；只有特别篇（special）允许合法落入第 0 季
+        min_season = 0 if episode_type == "special" else 1
+        if adjusted_season < min_season:
+            adjusted_season = base_season
+            logger.warning(
+                f"Season offset would result in invalid season for {data.official_title}, using original season"
+            )
+
+    if settings.bangumi_manage.rename_method == "custom":
+        template = (
+            settings.bangumi_manage.custom_movie_folder
+            if is_movie
+            else settings.bangumi_manage.custom_bangumi_folder
+        )
+        try:
+            relative = render_custom_name(
+                template,
+                NamingContext(
+                    title=data.official_title or "Unknown Bangumi",
+                    season=None if is_movie else adjusted_season,
+                    year=data.year,
+                    group=data.group_name,
+                ),
+                allow_path=True,
+            )
+            return str(Path(settings.downloader.path, *relative.split("/")))
+        except NamingTemplateError as error:
+            logger.error("Invalid custom folder template: %s", error)
+
+    folder = _media_folder(data)
+    if is_movie:
         # 电影/剧场版：Title (Year)/Title (Year).ext，不建 Season 子目录
         return str(Path(settings.downloader.path) / folder)
-    # Apply season_offset to get the adjusted season number for the folder
-    adjusted_season = data.season + getattr(data, "season_offset", 0)
-    # 季号下限：普通剧集最小为 1——偏移到 Season 0 会被 Plex/Jellyfin 当作
-    # 特别篇；只有特别篇（special）允许合法落入第 0 季
-    min_season = 0 if episode_type == "special" else 1
-    if adjusted_season < min_season:
-        adjusted_season = data.season
-        logger.warning(
-            f"Season offset would result in invalid season for {data.official_title}, using original season"
-        )
     save_path = Path(settings.downloader.path) / folder / f"Season {adjusted_season}"
     return str(save_path)
 
 
 def gen_movie_save_path(data: Movie | MovieUpdate) -> str:
     """Generate the flat save directory used by a movie/gekijouban."""
-    return str(Path(settings.downloader.path) / _media_folder(data))
+    return gen_save_path(data)
 
 
 def movie_rule_name(data: Movie) -> str:

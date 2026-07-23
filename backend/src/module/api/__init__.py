@@ -4,6 +4,7 @@ from .auth import router as auth_router
 from .bangumi import router as bangumi_router
 from .config import router as config_router
 from .downloader import router as downloader_router
+from .episode_naming import router as episode_naming_router
 from .events import router as events_router
 from .llm import router as llm_router
 from .log import router as log_router
@@ -32,6 +33,7 @@ v1.include_router(bangumi_router)
 v1.include_router(movie_router)
 v1.include_router(config_router)
 v1.include_router(downloader_router)
+v1.include_router(episode_naming_router)
 v1.include_router(events_router)
 v1.include_router(rss_router)
 v1.include_router(search_router)

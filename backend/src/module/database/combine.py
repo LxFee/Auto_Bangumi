@@ -10,6 +10,7 @@ from .aria2 import Aria2GidDatabase
 from .auth import AuthDatabase
 from .bangumi import BangumiDatabase
 from .engine import async_engine, async_session_factory
+from .episode_naming import EpisodeNamingDatabase
 from .inbox import InboxDatabase
 from .llm_credential import LLMCredentialDatabase
 from .migrations import (  # noqa: F401  (re-exported for existing importers)
@@ -53,6 +54,7 @@ class Database:
         self.inbox = InboxDatabase(self.session)
         self.llm_credential = LLMCredentialDatabase(self.session)
         self.rename_operation = RenameOperationDatabase(self.session)
+        self.episode_naming = EpisodeNamingDatabase(self.session)
 
     async def __aenter__(self):
         return self

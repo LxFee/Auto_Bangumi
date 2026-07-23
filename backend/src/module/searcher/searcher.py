@@ -23,15 +23,14 @@ SEARCH_KEY = [
 ]
 
 BangumiJSON: TypeAlias = str
+TMDBPreview: TypeAlias = tuple[str | None, str | None, str | None]
 
 # Cache for TMDB preview lookups by official_title. Bounded (LRU-ish,
 # oldest-evicted) like _tmdb_cache/_mikan_cache — was previously a plain dict
 # and grew unbounded for the life of the process. Values are keyed by parser
 # language because the title is localized while the poster URL usually is not.
 _POSTER_CACHE_MAX = 512
-_poster_cache: "OrderedDict[str, dict[str, tuple[str | None, str | None]]]" = (
-    OrderedDict()
-)
+_poster_cache: "OrderedDict[str, dict[str, TMDBPreview]]" = OrderedDict()
 
 
 def reset_cache() -> None:
@@ -48,31 +47,39 @@ class SearchTorrent:
         async with RequestContent() as req:
             return await req.get_torrents(rss_item.url)
 
-    async def _fetch_tmdb_preview(self, title: str) -> tuple[str | None, str | None]:
-        """Fetch localized title and poster URL from TMDB for search previews."""
+    async def _fetch_tmdb_preview(
+        self, title: str
+    ) -> TMDBPreview:
+        """Fetch localized title, year, and poster URL for search previews."""
         language = settings.rss_parser.language
         if title in _poster_cache and language in _poster_cache[title]:
             _poster_cache.move_to_end(title)
             return _poster_cache[title][language]
 
         localized_title = None
+        year = None
         poster_link = None
         try:
             tmdb_info = await tmdb_parser(title, language, test=True)
             if tmdb_info:
                 localized_title = tmdb_info.title
+                year = tmdb_info.year
                 poster_link = tmdb_info.poster_link
         except Exception as e:
             logger.debug("Failed to fetch TMDB preview for %s: %s", title, e)
 
         if title not in _poster_cache and len(_poster_cache) >= _POSTER_CACHE_MAX:
             _poster_cache.popitem(last=False)
-        _poster_cache.setdefault(title, {})[language] = (localized_title, poster_link)
-        return localized_title, poster_link
+        _poster_cache.setdefault(title, {})[language] = (
+            localized_title,
+            year,
+            poster_link,
+        )
+        return localized_title, year, poster_link
 
     async def _fetch_tmdb_poster(self, title: str) -> str | None:
         """Fetch poster from TMDB if not in cache."""
-        _, poster_link = await self._fetch_tmdb_preview(title)
+        _, _, poster_link = await self._fetch_tmdb_preview(title)
         return poster_link
 
     async def analyse_keyword(
@@ -99,11 +106,13 @@ class SearchTorrent:
                     exist_list.append(special_link)
                     # Fetch localized title and poster URL from TMDB if available.
                     if bangumi.official_title:
-                        tmdb_title, tmdb_poster = await self._fetch_tmdb_preview(
-                            bangumi.official_title
+                        tmdb_title, tmdb_year, tmdb_poster = (
+                            await self._fetch_tmdb_preview(bangumi.official_title)
                         )
                         if tmdb_title:
                             bangumi.official_title = tmdb_title
+                        if tmdb_year:
+                            bangumi.year = tmdb_year
                         if not bangumi.poster_link and tmdb_poster:
                             bangumi.poster_link = tmdb_poster
                     yield json.dumps(bangumi.dict(), separators=(",", ":"))

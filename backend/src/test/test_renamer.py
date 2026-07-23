@@ -8,6 +8,7 @@ from module.conf import settings
 from module.downloader import DownloadClient, RenameOutcome, RenameResult
 from module.manager.renamer import PreparedMediaRename, Renamer
 from module.models import EpisodeFile, Notification, SubtitleFile
+from module.naming import NamingContext
 
 # ---------------------------------------------------------------------------
 # gen_path
@@ -127,6 +128,64 @@ class TestGenPath:
         result = Renamer.gen_path(ep, "Test", method="pn")
         assert result.endswith(".mp4")
 
+    def test_custom_method_uses_template_context_and_preserves_suffix(self):
+        ep = EpisodeFile(
+            media_path="old.mkv",
+            group="ParsedGroup",
+            title="Raw Release Title",
+            season=2,
+            episode=3,
+            suffix=".mkv",
+        )
+        context = NamingContext(
+            title="Frieren",
+            season=2,
+            year="2026",
+            group="Sousou",
+            torrent_hash="abcdef123456",
+        )
+        with patch.object(
+            settings.bangumi_manage,
+            "custom_bangumi_file",
+            "{title} S{season:02}E{episode:02} {group:[]} {hash:[]}",
+        ):
+            result = Renamer.gen_path(
+                ep, "ignored folder", method="custom", naming_context=context
+            )
+
+        assert result == "Frieren S02E03 [Sousou] [abcdef].mkv"
+
+    def test_custom_subtitle_preserves_language_and_extension(self):
+        subtitle = SubtitleFile(
+            media_path="old.ass",
+            group="Sousou",
+            title="Raw Release Title",
+            season=2,
+            episode=3,
+            language="zh-tw",
+            suffix=".ass",
+        )
+        context = NamingContext(
+            title="Frieren",
+            season=2,
+            year="2026",
+            group="Sousou",
+            torrent_hash="abcdef123456",
+        )
+        with patch.object(
+            settings.bangumi_manage,
+            "custom_bangumi_file",
+            "{title} S{season:02}E{episode:02} {hash:[]}",
+        ):
+            result = Renamer.gen_path(
+                subtitle,
+                "ignored folder",
+                method="subtitle_custom",
+                naming_context=context,
+            )
+
+        assert result == "Frieren S02E03 [abcdef].zh-tw.ass"
+
 
 # ---------------------------------------------------------------------------
 # gen_path for movies
@@ -244,6 +303,36 @@ class TestGenPathMovie:
         )
         result = Renamer.gen_path(ep, "天气之子 (2019)", method="none")
         assert result == "original/path/movie.mkv"
+
+    def test_custom_movie_uses_its_own_file_template(self):
+        movie = EpisodeFile(
+            media_path="raw.mkv",
+            group="Lilith-Raws",
+            title="Tenki no Ko",
+            season=1,
+            episode=1,
+            suffix=".mkv",
+            episode_type="movie",
+        )
+        context = NamingContext(
+            title="Weathering With You",
+            year="2019",
+            group="Lilith-Raws",
+            torrent_hash="abcdef123456",
+        )
+        with patch.object(
+            settings.bangumi_manage,
+            "custom_movie_file",
+            "{title} {year:[]} {group:()}",
+        ):
+            result = Renamer.gen_path(
+                movie,
+                "ignored folder",
+                method="custom",
+                naming_context=context,
+            )
+
+        assert result == "Weathering With You [2019] (Lilith-Raws).mkv"
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +465,48 @@ class TestRenameFile:
         assert result.official_title == "My Anime"
         assert result.season == 1
         assert result.episode == 5
+
+    async def test_custom_rename_passes_context_to_the_downloader(self, renamer):
+        ep = EpisodeFile(
+            media_path="old.mkv",
+            group="Sousou",
+            title="Raw Title",
+            season=1,
+            episode=5,
+            suffix=".mkv",
+        )
+        context = NamingContext(
+            title="Frieren",
+            season=1,
+            year="2026",
+            group="Sousou",
+            torrent_hash="abcdef123456",
+        )
+        with (
+            patch.object(renamer._parser, "torrent_parser", return_value=ep),
+            patch.object(
+                settings.bangumi_manage,
+                "custom_bangumi_file",
+                "{title} E{episode:02} {hash:[]}",
+            ),
+        ):
+            renamer.client.client.torrents_rename_file.return_value = True
+            await renamer.rename_file(
+                torrent_name="[Sousou] Frieren - 05.mkv",
+                media_path="old.mkv",
+                bangumi_name="ignored folder",
+                method="custom",
+                season=1,
+                _hash="abcdef123456",
+                naming_context=context,
+            )
+
+        renamer.client.client.torrents_rename_file.assert_awaited_once_with(
+            torrent_hash="abcdef123456",
+            old_path="old.mkv",
+            new_path="Frieren E05 [abcdef].mkv",
+            verify=True,
+        )
 
     async def test_fractional_episode_notification_keeps_fraction(self, renamer):
         """半集重命名后通知里的集数保留小数 (#667)。"""
@@ -620,6 +751,50 @@ class TestRenameCollection:
             )
 
         assert renamer.client.client.torrents_rename_file.call_count == 3
+
+    async def test_custom_collection_renders_each_episode_with_shared_context(
+        self, renamer
+    ):
+        def mock_parser(torrent_path, season, **kwargs):
+            episode = 1 if "01" in torrent_path else 2
+            return EpisodeFile(
+                media_path=torrent_path,
+                group="Sousou",
+                title="Raw Anime",
+                season=season,
+                episode=episode,
+                suffix=".mkv",
+            )
+
+        context = NamingContext(
+            title="Frieren",
+            season=2,
+            year="2026",
+            group="Sousou",
+            torrent_hash="abcdef123456",
+        )
+        with (
+            patch.object(renamer._parser, "torrent_parser", side_effect=mock_parser),
+            patch.object(
+                settings.bangumi_manage,
+                "custom_bangumi_file",
+                "{title} S{season:02}E{episode:02} {hash:[]}",
+            ),
+        ):
+            renamer.client.client.torrents_rename_file.return_value = True
+            await renamer.rename_collection(
+                media_list=["raw01.mkv", "raw02.mkv"],
+                bangumi_name="ignored folder",
+                season=2,
+                method="custom",
+                _hash="abcdef123456",
+                naming_context=context,
+            )
+
+        assert self._rename_new_paths(renamer.client.client) == [
+            "Frieren S02E01 [abcdef].mkv",
+            "Frieren S02E02 [abcdef].mkv",
+        ]
 
     async def test_collection_success_adds_renamed_tag(self, renamer):
         """合集全部重命名成功后打 ab:renamed 标签 (#147)。"""
@@ -902,6 +1077,78 @@ class TestRenameFlow:
         assert len(result) == 1
         assert result[0].episode == 1
 
+    async def test_custom_flow_uses_resolved_metadata_with_arbitrary_folder_names(
+        self, renamer
+    ):
+        renamer.client.client.torrents_info.return_value = [
+            {
+                "hash": "abcdef123456",
+                "name": "[Sousou] Raw Release - 03.mkv",
+                "save_path": "/downloads/Bangumi/Library/Frieren/Second",
+                "tags": "ab:42",
+            }
+        ]
+        renamer.client.client.torrents_files.return_value = [
+            {"name": "[Sousou] Raw Release - 03.mkv"}
+        ]
+        renamer.client.client.torrents_rename_file.return_value = True
+
+        def parse_with_resolved_season(*, season, **kwargs):
+            assert season == 2
+            return EpisodeFile(
+                media_path="[Sousou] Raw Release - 03.mkv",
+                group="Sousou",
+                title="Raw Release",
+                season=season,
+                episode=3,
+                suffix=".mkv",
+            )
+
+        with (
+            patch.object(
+                renamer,
+                "_batch_lookup_offsets",
+                AsyncMock(
+                    return_value={
+                        "abcdef123456": (
+                            0,
+                            0,
+                            "episode",
+                            "Frieren",
+                            "2026",
+                            "Sousou",
+                            2,
+                        )
+                    }
+                ),
+            ),
+            patch.object(
+                renamer._parser,
+                "torrent_parser",
+                side_effect=parse_with_resolved_season,
+            ),
+            patch("module.manager.renamer.settings") as mock_settings,
+            patch("module.downloader.path.settings") as mock_path_settings,
+        ):
+            mock_settings.bangumi_manage.rename_method = "custom"
+            mock_settings.bangumi_manage.custom_bangumi_file = (
+                "{title} S{season:02}E{episode:02} {group:[]} {hash:[]}"
+            )
+            mock_settings.bangumi_manage.remove_bad_torrent = False
+            mock_settings.bangumi_manage.revision_conflict_policy = "hold"
+            mock_settings.downloader.type = "qbittorrent"
+            mock_settings.downloader.host = "localhost:8080"
+            mock_path_settings.downloader.path = "/downloads/Bangumi"
+
+            await renamer.rename()
+
+        renamer.client.client.torrents_rename_file.assert_awaited_once_with(
+            torrent_hash="abcdef123456",
+            old_path="[Sousou] Raw Release - 03.mkv",
+            new_path="Frieren S02E03 [Sousou] [abcdef].mkv",
+            verify=True,
+        )
+
     async def test_collection_sets_category(self, renamer):
         """Multi-file torrent triggers collection rename and set_category."""
         renamer.client.client.torrents_info.return_value = [
@@ -1084,6 +1331,7 @@ class TestRevisionConflictFlow:
                 AsyncMock(return_value=self._offsets()),
             ),
         ):
+            downloader_type = renamer._downloader_type()
             results = await asyncio.gather(renamer.rename(), other.rename())
 
         assert sum(len(result) for result in results) == 1
@@ -1093,7 +1341,7 @@ class TestRevisionConflictFlow:
 
         async with Database() as db:
             operation = await db.rename_operation.get_by_target(
-                downloader_type=renamer._downloader_type(),
+                downloader_type=downloader_type,
                 save_path=self.SAVE_PATH,
                 target_path=self.TARGET,
                 active_only=False,
@@ -1225,6 +1473,92 @@ class TestRevisionConflictFlow:
         renamer.client.client.torrents_delete.assert_awaited_once_with(
             "old-v1", delete_files=True
         )
+        assert renamer.events == []
+
+    async def test_stable_custom_target_enters_revision_replacement(
+        self, renamer, test_settings
+    ):
+        infos = self._infos()
+        renamer.client.client.torrents_info.return_value = infos
+        paths = {"old-v1": self.TARGET, "new-v2": self.V2}
+
+        async def files(torrent_hash):
+            return [{"name": paths[torrent_hash]}]
+
+        async def rename(torrent_hash, old_path, new_path, verify=True):
+            assert paths[torrent_hash] == old_path
+            paths[torrent_hash] = new_path
+            return RenameResult(RenameOutcome.RENAMED)
+
+        async def delete(torrent_hash, delete_files=True):
+            infos[:] = [info for info in infos if info["hash"] != torrent_hash]
+            return True
+
+        renamer.client.client.torrents_files.side_effect = files
+        renamer.client.client.torrents_rename_file.side_effect = rename
+        renamer.client.client.torrents_delete.side_effect = delete
+        test_settings.bangumi_manage.rename_method = "custom"
+        test_settings.bangumi_manage.custom_bangumi_file = (
+            "{title} S{season:02}E{episode:02}"
+        )
+        test_settings.bangumi_manage.revision_conflict_policy = "replace"
+        metadata = {"new-v2": (0, 0, "episode", "尼古喵喵", "2026", "ANi", 1)}
+
+        with (
+            patch("module.manager.renamer.settings", test_settings),
+            patch.object(
+                renamer,
+                "_batch_lookup_offsets",
+                AsyncMock(return_value=metadata),
+            ),
+        ):
+            result = await renamer.rename()
+
+        assert len(result) == 1
+        assert paths["new-v2"] == self.TARGET
+        renamer.client.client.torrents_delete.assert_awaited_once_with(
+            "old-v1", delete_files=True
+        )
+
+    async def test_custom_hash_target_coexists_without_cross_path_replacement(
+        self, renamer, test_settings
+    ):
+        infos = self._infos()
+        old_target = "尼古喵喵 S01E01 [old-v1].mp4"
+        new_target = "尼古喵喵 S01E01 [new-v2].mp4"
+        renamer.client.client.torrents_info.return_value = infos
+        paths = {"old-v1": old_target, "new-v2": self.V2}
+
+        async def files(torrent_hash):
+            return [{"name": paths[torrent_hash]}]
+
+        async def rename(torrent_hash, old_path, new_path, verify=True):
+            assert paths[torrent_hash] == old_path
+            paths[torrent_hash] = new_path
+            return RenameResult(RenameOutcome.RENAMED)
+
+        renamer.client.client.torrents_files.side_effect = files
+        renamer.client.client.torrents_rename_file.side_effect = rename
+        test_settings.bangumi_manage.rename_method = "custom"
+        test_settings.bangumi_manage.custom_bangumi_file = (
+            "{title} S{season:02}E{episode:02} {hash:[]}"
+        )
+        test_settings.bangumi_manage.revision_conflict_policy = "replace"
+        metadata = {"new-v2": (0, 0, "episode", "尼古喵喵", "2026", "ANi", 1)}
+
+        with (
+            patch("module.manager.renamer.settings", test_settings),
+            patch.object(
+                renamer,
+                "_batch_lookup_offsets",
+                AsyncMock(return_value=metadata),
+            ),
+        ):
+            result = await renamer.rename()
+
+        assert len(result) == 1
+        assert paths == {"old-v1": old_target, "new-v2": new_target}
+        renamer.client.client.torrents_delete.assert_not_awaited()
         assert renamer.events == []
 
     async def test_promotion_failure_restores_v1_and_waits_for_retry(
@@ -1465,6 +1799,7 @@ class TestRevisionConflictFlow:
                 AsyncMock(return_value=self._offsets()),
             ),
         ):
+            downloader_type = renamer._downloader_type()
             assert await renamer.rename() == []
 
         assert paths["new-v2"] == self.TARGET
@@ -1476,7 +1811,7 @@ class TestRevisionConflictFlow:
 
         async with Database() as db:
             operation = await db.rename_operation.get_by_target(
-                downloader_type=renamer._downloader_type(),
+                downloader_type=downloader_type,
                 save_path=self.SAVE_PATH,
                 target_path=self.TARGET,
             )

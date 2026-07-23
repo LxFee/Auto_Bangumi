@@ -168,6 +168,18 @@ class TestUpdateConfig:
 
         assert response.status_code == 422
 
+    def test_update_config_returns_validation_error_for_invalid_custom_template(
+        self, authed_client
+    ):
+        update_data = Config().dict()
+        update_data["bangumi_manage"]["rename_method"] = "custom"
+        update_data["bangumi_manage"]["custom_bangumi_file"] = "{episode:02[]}"
+
+        response = authed_client.patch("/api/v1/config/update", json=update_data)
+
+        assert response.status_code == 422
+        assert "episode:02[]" in response.text
+
     def test_update_config_success(self, authed_client, mock_settings, mock_ctx):
         """PATCH /config/update updates configuration successfully."""
         update_data = {
