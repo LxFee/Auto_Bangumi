@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PR_WORKFLOW = REPO_ROOT / ".github/workflows/e2e.yml"
 NIGHTLY_WORKFLOW = REPO_ROOT / ".github/workflows/e2e-nightly.yml"
 BUILD_WORKFLOW = REPO_ROOT / ".github/workflows/build.yml"
+TEMPORARY_GHCR_WORKFLOW = REPO_ROOT / ".github/workflows/temporary-ghcr.yml"
 PLAYWRIGHT_CONFIG = REPO_ROOT / "webui/playwright.config.ts"
 DOWNLOADER_RUNNER = REPO_ROOT / "e2e/scripts/run_downloader_lane.py"
 E2E_README = REPO_ROOT / "e2e/README.md"
@@ -190,6 +191,28 @@ def test_normal_backend_workflow_excludes_e2e_tests() -> None:
     assert re.search(
         r'uv run pytest src/test -v -m ["\']not e2e["\']',
         source,
+    )
+
+
+def test_temporary_ghcr_image_stages_webui_and_application_version() -> None:
+    source = _read(TEMPORARY_GHCR_WORKFLOW)
+    build_image = _job(source, "build-image")
+
+    assert "path: backend/src/dist" in build_image
+    assert "working-directory: backend/src" in build_image
+    assert "module/__version__.py" in build_image
+    assert 'VERSION=\'${{ env.IMAGE_TAG }}\'' in build_image
+
+
+def test_temporary_ghcr_image_uses_parseable_version() -> None:
+    source = _read(TEMPORARY_GHCR_WORKFLOW)
+    match = re.search(r"(?m)^  IMAGE_TAG: (?P<version>\S+)$", source)
+
+    assert match
+    assert re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+"
+        r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+        match.group("version"),
     )
 
 

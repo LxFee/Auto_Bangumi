@@ -15,7 +15,7 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/lxfee/auto_bangumi
-  IMAGE_TAG: 3.3-dev-limil
+  IMAGE_TAG: 3.3.5-limil.1
 
 jobs:
   build-webui:
@@ -68,6 +68,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Create version info
+        working-directory: backend/src
+        run: echo "VERSION='${{ env.IMAGE_TAG }}'" > module/__version__.py
 
       - name: Download webui
         uses: actions/download-artifact@v4
