@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import EpisodeNamingWorkbench from '@/components/episode-naming-workbench.vue';
 import AbTorrentListPage from '@/components/ab-torrent-list-page.vue';
 import { apiBangumi } from '@/api/bangumi';
 
@@ -28,19 +29,29 @@ watch(
   { immediate: true }
 );
 
-// id 收窄后一次性构造 props，切换参数时 :key 触发重新挂载并加载
+const showTorrentRecords = computed(() => route.query.view === 'torrents');
 const pageProps = computed(() => {
   const id = bangumiId.value;
   if (id === null) return null;
   return {
     title: `${t('homepage.torrents.title')} #${id}`,
-    loadFn: () => apiBangumi.getTorrents(id),
-    deleteOne: (torrentId: number) => apiBangumi.deleteTorrent(id, torrentId),
-    deleteAll: () => apiBangumi.deleteAllTorrents(id),
+    loadFn: () => apiBangumi.getGroupTorrents(id),
+    deleteOne: (torrentId: number) =>
+      apiBangumi.deleteGroupTorrent(id, torrentId),
+    deleteAll: () => apiBangumi.deleteGroupTorrents(id),
   };
 });
 </script>
 
 <template>
-  <AbTorrentListPage v-if="pageProps" :key="bangumiId ?? -1" v-bind="pageProps" />
+  <AbTorrentListPage
+    v-if="showTorrentRecords && pageProps"
+    :key="`torrents-${bangumiId}`"
+    v-bind="pageProps"
+  />
+  <EpisodeNamingWorkbench
+    v-else-if="bangumiId"
+    :key="bangumiId"
+    :group-id="bangumiId"
+  />
 </template>

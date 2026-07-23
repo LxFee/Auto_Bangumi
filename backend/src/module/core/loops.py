@@ -11,6 +11,7 @@ from module.conf import settings
 from module.database import Database
 from module.downloader import DownloadClient
 from module.manager import Renamer, TorrentManager, eps_complete
+from module.manager.episode_naming import EpisodeNamingWorkbench
 from module.notification import NotificationManager, UpdateAvailableEvent
 from module.rss import RSSAnalyser, RSSEngine
 from module.update import updater
@@ -66,6 +67,16 @@ async def rename_tick(notifier: NotificationManager) -> None:
         renamer = Renamer(client)
         renamed_info = await renamer.rename()
         rename_events = list(renamer.events)
+        try:
+            async with Database() as db:
+                workbench = EpisodeNamingWorkbench(db.session)
+                await workbench.sync_from_downloader(client, legacy=True)
+                await workbench.retry_approved(client)
+        except Exception:
+            # Naming-plan discovery is auxiliary to the proven renamer path;
+            # an offline/partial downloader response must not suppress normal
+            # rename notifications or stop the scheduler.
+            logger.warning("Episode naming workbench sync failed", exc_info=True)
     if rename_events:
         await asyncio.gather(*[notifier.send_event(event) for event in rename_events])
     if settings.notification.enable and renamed_info:

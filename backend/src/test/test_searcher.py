@@ -20,11 +20,23 @@ class TestSearchUrl:
     def mock_search_config(self):
         """Ensure SEARCH_CONFIG has default providers."""
         config = {
-            "mikan": "https://mikanani.me/RSS/Search?searchstr=%s",
-            "nyaa": "https://nyaa.si/?page=rss&q=%s&c=0_0&f=0",
-            "dmhy": "http://dmhy.org/topics/rss/rss.xml?keyword=%s",
+            "mikan": {
+                "url": "https://mikanani.me/RSS/Search?searchstr=%s",
+                "parser": "mikan",
+            },
+            "nyaa": {
+                "url": "https://nyaa.si/?page=rss&q=%s&c=0_0&f=0",
+                "parser": "tmdb",
+            },
+            "dmhy": {
+                "url": "http://dmhy.org/topics/rss/rss.xml?keyword=%s",
+                "parser": "tmdb",
+            },
         }
-        with patch("module.searcher.provider.SEARCH_CONFIG", config):
+        # search_url() calls get_provider(), whose authoritative state lives
+        # in module.conf.search_provider. Patching the compatibility re-export
+        # made this test depend on the user's local provider configuration.
+        with patch("module.conf.search_provider.SEARCH_CONFIG", config):
             yield
 
     def test_mikan_url(self):

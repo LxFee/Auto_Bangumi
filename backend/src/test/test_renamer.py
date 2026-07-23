@@ -1331,6 +1331,7 @@ class TestRevisionConflictFlow:
                 AsyncMock(return_value=self._offsets()),
             ),
         ):
+            downloader_type = renamer._downloader_type()
             results = await asyncio.gather(renamer.rename(), other.rename())
 
         assert sum(len(result) for result in results) == 1
@@ -1340,7 +1341,7 @@ class TestRevisionConflictFlow:
 
         async with Database() as db:
             operation = await db.rename_operation.get_by_target(
-                downloader_type=renamer._downloader_type(),
+                downloader_type=downloader_type,
                 save_path=self.SAVE_PATH,
                 target_path=self.TARGET,
                 active_only=False,
@@ -1798,6 +1799,7 @@ class TestRevisionConflictFlow:
                 AsyncMock(return_value=self._offsets()),
             ),
         ):
+            downloader_type = renamer._downloader_type()
             assert await renamer.rename() == []
 
         assert paths["new-v2"] == self.TARGET
@@ -1809,7 +1811,7 @@ class TestRevisionConflictFlow:
 
         async with Database() as db:
             operation = await db.rename_operation.get_by_target(
-                downloader_type=renamer._downloader_type(),
+                downloader_type=downloader_type,
                 save_path=self.SAVE_PATH,
                 target_path=self.TARGET,
             )

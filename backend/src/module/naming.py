@@ -75,6 +75,18 @@ def validate_custom_template(template: str, *, allow_path: bool = False) -> str:
     return template
 
 
+def custom_template_fields(template: str) -> tuple[str, ...]:
+    """Return referenced fields once, preserving their template order."""
+
+    validate_custom_template(template)
+    return tuple(
+        dict.fromkeys(
+            _parse_placeholder(match.group(1))[0]
+            for match in _PLACEHOLDER_RE.finditer(template)
+        )
+    )
+
+
 def _safe_value(value: object | None) -> object | None:
     if not isinstance(value, str):
         return value
