@@ -1,4 +1,5 @@
 import json
+from typing import TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,6 +14,13 @@ from module.manager.episode_naming import (
     SubtitleAssociation,
 )
 from module.models import Bangumi, NamingExecution, Torrent
+
+T = TypeVar("T")
+
+
+def required(value: T | None) -> T:
+    assert value is not None
+    return value
 
 
 def rule(title_raw: str, group_name: str) -> Bangumi:
@@ -67,9 +75,9 @@ async def test_group_aggregates_rules_and_observed_episode_plans(
             files=[ObservedFile(index=0, name="Neko/Neko alt - 03.mkv")],
         )
     )
-    detail = await workbench.get_group(detail.group.id)
-
-    assert detail is not None
+    refreshed = await workbench.get_group(required(detail.group.id))
+    assert refreshed is not None
+    detail = refreshed
     assert [item.id for item in detail.rules] == [first.id, second.id]
     assert len(detail.plans) == 3
     video = next(
@@ -119,7 +127,7 @@ async def test_switching_group_to_movie_rebuilds_plan_with_movie_template(
     assert plan.anomaly_reason == "缺少字段: episode"
 
     await workbench.update_group(
-        detail.group.id, GroupMetadataUpdate(episode_type="movie")
+        required(detail.group.id), GroupMetadataUpdate(episode_type="movie")
     )
     await db_session.refresh(plan)
 
@@ -152,19 +160,20 @@ async def test_manual_episode_correction_can_be_approved_as_one_naming_unit(
     )
     plan = detail.plans[0]
     assert plan.anomaly_reason == "缺少字段: episode"
+    plan_id = required(plan.id)
 
     corrected = await workbench.correct(
-        plan.id, NamingCorrection(fields={"episode": 2})
+        plan_id, NamingCorrection(fields={"episode": 2})
     )
-    revision = await workbench.approve(plan.id)
+    revision = await workbench.approve(plan_id)
 
-    assert json.loads(corrected.manual_fields) == {"episode": 2}
+    assert json.loads(required(corrected.manual_fields)) == {"episode": 2}
     assert corrected.target_path == "Neko/尼古喵喵 S01E02.mkv"
     assert revision.revision == 1
     assert revision.state == "approved"
     assert json.loads(revision.target_manifest) == [
         {
-            "plan_id": plan.id,
+            "plan_id": plan_id,
             "file_index": 0,
             "source": "Neko/unknown.mkv",
             "target": "Neko/尼古喵喵 S01E02.mkv",
@@ -174,7 +183,7 @@ async def test_manual_episode_correction_can_be_approved_as_one_naming_unit(
     client = AsyncMock()
     client.get_torrent_files.return_value = [{"index": 0, "name": "Neko/unknown.mkv"}]
     client.rename_torrent_file.return_value = RenameResult(RenameOutcome.RENAMED)
-    applied = await workbench.execute_approved(plan.id, client)
+    applied = await workbench.execute_approved(plan_id, client)
     assert applied.state == "applied"
     client.rename_torrent_file.assert_awaited_once_with(
         "task-with-bad-title",
@@ -207,14 +216,15 @@ async def test_manual_episode_and_rule_offset_remain_independent(
         )
     )
     plan = detail.plans[0]
+    plan_id = required(plan.id)
 
     assert json.loads(plan.default_snapshot)["episode"] == 2
     assert plan.target_path == "尼古喵喵 S01E04.mkv"
 
     corrected = await workbench.correct(
-        plan.id, NamingCorrection(fields={"episode": 5})
+        plan_id, NamingCorrection(fields={"episode": 5})
     )
-    assert json.loads(corrected.manual_fields)["episode"] == 5
+    assert json.loads(required(corrected.manual_fields))["episode"] == 5
     assert corrected.target_path == "尼古喵喵 S01E07.mkv"
 
 
@@ -246,7 +256,7 @@ async def test_collection_anomaly_is_isolated_per_video(db_session, monkeypatch)
 
     assert valid.anomaly_reason is None
     assert invalid.anomaly_reason == "缺少字段: episode"
-    assert (await workbench.approve(valid.id)).state == "approved"
+    assert (await workbench.approve(required(valid.id))).state == "approved"
 
 
 @pytest.mark.asyncio
@@ -283,11 +293,13 @@ async def test_ambiguous_subtitle_requires_explicit_association(
     )
     assert subtitle.subtitle_of_id is None
     assert subtitle.anomaly_reason == "字幕无法唯一关联到视频"
+    subtitle_id = required(subtitle.id)
+    video_id = required(video.id)
 
     associated = await workbench.associate_subtitle(
-        subtitle.id, SubtitleAssociation(video_plan_id=video.id)
+        subtitle_id, SubtitleAssociation(video_plan_id=video_id)
     )
-    assert associated.subtitle_of_id == video.id
+    assert associated.subtitle_of_id == video_id
     assert associated.target_path == "Subs/尼古喵喵 S01E02.zh.ass"
 
 
@@ -317,7 +329,8 @@ async def test_partial_unit_failure_retries_only_remaining_file(
         )
     )
     video = next(plan for plan in detail.plans if plan.file_kind == "video")
-    await workbench.approve(video.id)
+    video_id = required(video.id)
+    await workbench.approve(video_id)
 
     first = AsyncMock()
     first.get_torrent_files.return_value = [
@@ -328,10 +341,11 @@ async def test_partial_unit_failure_retries_only_remaining_file(
         RenameResult(RenameOutcome.RENAMED),
         RenameResult(RenameOutcome.RETRYABLE_FAILURE, detail="offline"),
     ]
-    failed = await workbench.execute_approved(video.id, first)
+    failed = await workbench.execute_approved(video_id, first)
     assert failed.state == "retry"
 
-    execution = await db_session.get(NamingExecution, video.id)
+    execution = await db_session.get(NamingExecution, video_id)
+    assert execution is not None
     execution.retry_at = None
     db_session.add(execution)
     await db_session.commit()
@@ -341,7 +355,7 @@ async def test_partial_unit_failure_retries_only_remaining_file(
         {"index": 1, "name": "Neko - 02 [CHS].ass"},
     ]
     second.rename_torrent_file.return_value = RenameResult(RenameOutcome.RENAMED)
-    applied = await workbench.execute_approved(video.id, second)
+    applied = await workbench.execute_approved(video_id, second)
 
     assert applied.state == "applied"
     second.rename_torrent_file.assert_awaited_once_with(
@@ -369,6 +383,8 @@ async def test_moving_last_rule_moves_plans_and_removes_empty_group(
     workbench = EpisodeNamingWorkbench(db_session)
     first_group = await workbench.get_rule_group(first.id)
     second_group = await workbench.get_rule_group(second.id)
+    first_group_id = required(first_group.id)
+    second_group_id = required(second_group.id)
     await workbench.observe_task(
         ObservedTask(
             downloader_type="qbittorrent",
@@ -379,13 +395,13 @@ async def test_moving_last_rule_moves_plans_and_removes_empty_group(
         )
     )
 
-    await workbench.move_rule(first.id, second_group.id)
+    await workbench.move_rule(first.id, second_group_id)
 
-    assert await workbench.get_group(first_group.id) is None
-    moved = await workbench.get_group(second_group.id)
+    assert await workbench.get_group(first_group_id) is None
+    moved = await workbench.get_group(second_group_id)
     assert moved is not None
     assert {item.id for item in moved.rules} == {first.id, second.id}
-    assert moved.plans[0].group_id == second_group.id
+    assert moved.plans[0].group_id == second_group_id
 
 
 @pytest.mark.asyncio
@@ -398,15 +414,16 @@ async def test_group_torrent_records_aggregate_member_rules(db_session):
     await db_session.refresh(second)
     workbench = EpisodeNamingWorkbench(db_session)
     group = await workbench.get_rule_group(first.id)
-    await workbench.move_rule(second.id, group.id)
+    group_id = required(group.id)
+    await workbench.move_rule(second.id, group_id)
     first_torrent = Torrent(bangumi_id=first.id, name="episode 1", url="https://a")
     second_torrent = Torrent(bangumi_id=second.id, name="episode 2", url="https://b")
     db_session.add_all([first_torrent, second_torrent])
     await db_session.commit()
     await db_session.refresh(first_torrent)
 
-    assert len(await workbench.get_group_torrents(group.id)) == 2
-    assert await workbench.delete_group_torrents(group.id, first_torrent.id) == 1
-    assert [item.name for item in await workbench.get_group_torrents(group.id)] == [
+    assert len(await workbench.get_group_torrents(group_id)) == 2
+    assert await workbench.delete_group_torrents(group_id, first_torrent.id) == 1
+    assert [item.name for item in await workbench.get_group_torrents(group_id)] == [
         "episode 2"
     ]

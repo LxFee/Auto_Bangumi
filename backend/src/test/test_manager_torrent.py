@@ -61,11 +61,11 @@ class TestDeleteRuleRSSCleanup:
                     files=[ObservedFile(index=0, name="Look Back - 01.mkv")],
                 )
             )
-            await workbench.approve(detail.plans[0].id)
             group_id = detail.group.id
             plan_id = detail.plans[0].id
             assert group_id is not None
             assert plan_id is not None
+            await workbench.approve(plan_id)
 
             resp = await TorrentManager(db).delete_rule(1, file=False)
 
