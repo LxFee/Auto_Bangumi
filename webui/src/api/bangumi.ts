@@ -36,17 +36,6 @@ export const apiBangumi = {
     return data;
   },
 
-  async moveRuleToGroup(groupId: number, ruleId: number) {
-    await axios.put(`api/v1/bangumi-groups/${groupId}/rules/${ruleId}`);
-  },
-
-  async separateRule(ruleId: number) {
-    const { data } = await axios.post<BangumiGroup>(
-      `api/v1/bangumi-groups/rules/${ruleId}/separate`
-    );
-    return data;
-  },
-
   async refreshGroup(groupId: number) {
     const { data } = await axios.post<BangumiGroupDetail>(
       `api/v1/bangumi-groups/${groupId}/refresh`
@@ -65,23 +54,6 @@ export const apiBangumi = {
       fields
     );
     return data;
-  },
-
-  async getGroupTorrents(groupId: number) {
-    const { data } = await axios.get<Torrent[]>(
-      `api/v1/bangumi-groups/${groupId}/torrents`
-    );
-    return data;
-  },
-
-  async deleteGroupTorrents(groupId: number) {
-    await axios.delete(`api/v1/bangumi-groups/${groupId}/torrents`);
-  },
-
-  async deleteGroupTorrent(groupId: number, torrentId: number) {
-    await axios.delete(
-      `api/v1/bangumi-groups/${groupId}/torrents/${torrentId}`
-    );
   },
 
   async correctNamingPlan(

@@ -73,15 +73,6 @@ const detail = {
   rules: [rule],
   plans: [plans[0], plans[2], plans[1], plans[5], plans[4], plans[3]],
 };
-const summaries = [
-  {
-    group,
-    rule_ids: [rule.id],
-    rule_count: 1,
-    plan_count: plans.length,
-    anomaly_count: 1,
-  },
-];
 
 async function mockWorkbench(page: import('@playwright/test').Page) {
   await page.addInitScript(() => {
@@ -95,14 +86,6 @@ async function mockWorkbench(page: import('@playwright/test').Page) {
       url.pathname === '/api/v1/bangumi-groups/1'
     ) {
       await route.fulfill({ json: detail });
-      return;
-    }
-    if (url.pathname === '/api/v1/bangumi-groups') {
-      await route.fulfill({ json: summaries });
-      return;
-    }
-    if (url.pathname === '/api/v1/bangumi-groups/1/torrents') {
-      await route.fulfill({ json: [] });
       return;
     }
     if (url.pathname.includes('/events')) {
@@ -142,17 +125,12 @@ test('expanded editor actions remain reachable in every supported layout', async
     await expect(page.getByRole('button', { name: '刷新文件' })).toBeInViewport(
       { ratio: 1 }
     );
-    await expect(page.getByRole('link', { name: '种子记录' })).toBeInViewport({
-      ratio: 1,
-    });
+    await expect(page.getByText('调整归组')).toHaveCount(0);
+    await expect(page.getByText('种子记录')).toHaveCount(0);
 
     await page.getByRole('button', { name: '编辑番剧信息' }).click();
     await expect(page.getByLabel('title')).toHaveValue('尼古喵喵');
     await page.getByRole('button', { name: '取消' }).click();
-
-    await page.getByRole('button', { name: '调整归组' }).click();
-    await expect(page.getByText('拆分为独立番剧')).toBeVisible();
-    await page.getByRole('button', { name: '收起归组' }).click();
 
     await page.getByRole('button', { name: /E—.*樱桃花字幕组/ }).click();
     await page.getByLabel('episode').fill('2');
@@ -181,26 +159,4 @@ test('expanded editor actions remain reachable in every supported layout', async
       });
     }
   }
-});
-
-test('torrent records provide a route-local way back to the workbench', async ({
-  page,
-}) => {
-  await mockWorkbench(page);
-  await page.setViewportSize({ width: 925, height: 912 });
-  await page.goto('/#/bangumi-torrents/1');
-
-  await page.getByRole('link', { name: '种子记录' }).click();
-  await expect(page).toHaveURL(/view=torrents/);
-  const backLink = page.getByRole('link', { name: '返回命名工作台' });
-  await expect(backLink).toBeVisible();
-  await expect(page.locator('.torrent-records-view')).toHaveCSS('opacity', '1');
-  if (process.env.AB_E2E_CAPTURE_DIR) {
-    await page.screenshot({
-      path: `${process.env.AB_E2E_CAPTURE_DIR}/after-torrent-records-925x912.png`,
-    });
-  }
-  await backLink.click();
-  await expect(page).toHaveURL(/#\/bangumi-torrents\/1$/);
-  await expect(page.getByRole('heading', { name: '尼古喵喵' })).toBeVisible();
 });

@@ -2,20 +2,17 @@
 import type {
   BangumiAPI,
   BangumiGroupDetail,
-  BangumiGroupSummary,
   BangumiRule,
   NamingPlan,
 } from '#/bangumi';
 
 const props = defineProps<{ groupId: number }>();
-const router = useRouter();
 const detail = ref<BangumiGroupDetail | null>(null);
 const selectedId = ref<number | null>(null);
 const loading = ref(true);
 const refreshing = ref(false);
 const saving = ref(false);
 const editingMetadata = ref(false);
-const managingGroups = ref(false);
 const message = ref('');
 const draft = reactive<Record<string, string | number | null>>({});
 const metadataDraft = reactive({
@@ -25,8 +22,6 @@ const metadataDraft = reactive({
   episode_type: 'episode' as 'episode' | 'movie' | 'special',
 });
 const associationDraft = reactive<Record<number, number | null>>({});
-const moveTargets = reactive<Record<number, number | null>>({});
-const allGroups = ref<BangumiGroupSummary[]>([]);
 
 const videos = computed(() =>
   (detail.value?.plans ?? [])
@@ -160,7 +155,6 @@ async function load(refresh = true) {
       ? await apiBangumi.refreshGroup(props.groupId)
       : await apiBangumi.getGroup(props.groupId);
     syncMetadataDraft();
-    allGroups.value = await apiBangumi.getGroups();
   } catch (error) {
     message.value = errorMessage(error);
     if (refresh) {
@@ -268,38 +262,6 @@ async function associate(subtitle: NamingPlan) {
   }
 }
 
-async function moveRule(ruleId: number) {
-  const target = moveTargets[ruleId];
-  if (!target) return;
-  saving.value = true;
-  try {
-    await apiBangumi.moveRuleToGroup(target, ruleId);
-    message.value = '规则已移动到目标番剧';
-    if (detail.value?.rules.length === 1) {
-      await router.push(`/bangumi-torrents/${target}`);
-    } else {
-      await load(false);
-    }
-  } catch (error) {
-    message.value = errorMessage(error);
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function separateRule(ruleId: number) {
-  saving.value = true;
-  try {
-    const group = await apiBangumi.separateRule(ruleId);
-    message.value = '规则已拆分为独立番剧';
-    await router.push(`/bangumi-torrents/${group.id}`);
-  } catch (error) {
-    message.value = errorMessage(error);
-  } finally {
-    saving.value = false;
-  }
-}
-
 function editRule(rule: BangumiAPI) {
   const normalized: BangumiRule = {
     ...rule,
@@ -343,12 +305,6 @@ watch(
         >
           {{ refreshing ? '刷新中…' : '刷新文件' }}
         </button>
-        <router-link
-          :to="`/bangumi-torrents/${groupId}?view=torrents`"
-          class="secondary link-button"
-        >
-          种子记录
-        </router-link>
       </div>
     </header>
 
@@ -363,50 +319,6 @@ watch(
       >
         {{ rule.group_name || rule.rule_name || `规则 ${rule.id}` }}
       </button>
-      <button
-        type="button"
-        class="rule-chip"
-        @click="managingGroups = !managingGroups"
-      >
-        {{ managingGroups ? '收起归组' : '调整归组' }}
-      </button>
-    </section>
-
-    <section v-if="managingGroups && detail" class="group-manager">
-      <div v-for="rule in detail.rules" :key="rule.id" class="group-rule-row">
-        <strong>{{
-          rule.group_name || rule.rule_name || `规则 ${rule.id}`
-        }}</strong>
-        <select v-model="moveTargets[rule.id]">
-          <option :value="null">移动到已有番剧</option>
-          <option
-            v-for="summary in allGroups.filter(
-              (item) => item.group.id !== detail?.group.id
-            )"
-            :key="summary.group.id"
-            :value="summary.group.id"
-          >
-            {{ summary.group.official_title }} ·
-            {{ summary.group.year || '年份未知' }} · S{{ summary.group.season }}
-          </option>
-        </select>
-        <button
-          type="button"
-          class="secondary"
-          :disabled="saving"
-          @click="moveRule(rule.id)"
-        >
-          移动
-        </button>
-        <button
-          type="button"
-          class="secondary"
-          :disabled="saving || detail.rules.length === 1"
-          @click="separateRule(rule.id)"
-        >
-          拆分为独立番剧
-        </button>
-      </div>
     </section>
 
     <section v-if="editingMetadata" class="metadata-editor">
@@ -673,25 +585,6 @@ small,
   background: var(--color-surface-hover);
 }
 
-.group-manager {
-  margin-bottom: 18px;
-  padding: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-hover);
-}
-
-.group-rule-row {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(240px, 2fr) auto auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.group-rule-row + .group-rule-row {
-  margin-top: 10px;
-}
-
 .table-shell {
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -799,10 +692,6 @@ button.primary {
   cursor: pointer;
 }
 
-.link-button {
-  text-decoration: none;
-}
-
 .secondary {
   border: 1px solid var(--color-border);
   color: inherit;
@@ -896,7 +785,6 @@ button:disabled {
   }
 
   .metadata-editor,
-  .group-rule-row,
   .subtitle-association {
     grid-template-columns: 1fr;
   }

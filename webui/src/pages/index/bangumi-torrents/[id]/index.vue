@@ -1,7 +1,5 @@
 <script lang="ts" setup>
 import EpisodeNamingWorkbench from '@/components/episode-naming-workbench.vue';
-import AbTorrentListPage from '@/components/ab-torrent-list-page.vue';
-import { apiBangumi } from '@/api/bangumi';
 
 definePage({
   name: 'Bangumi Torrents',
@@ -9,7 +7,6 @@ definePage({
 
 const route = useRoute();
 const router = useRouter();
-const { t } = useI18n();
 
 // KeepAlive 会复用同一实例，路由参数必须保持响应式；非法 id 归一为 null
 const bangumiId = computed(() => {
@@ -28,52 +25,12 @@ watch(
   },
   { immediate: true }
 );
-
-const showTorrentRecords = computed(() => route.query.view === 'torrents');
-const pageProps = computed(() => {
-  const id = bangumiId.value;
-  if (id === null) return null;
-  return {
-    title: `${t('homepage.torrents.title')} #${id}`,
-    loadFn: () => apiBangumi.getGroupTorrents(id),
-    deleteOne: (torrentId: number) =>
-      apiBangumi.deleteGroupTorrent(id, torrentId),
-    deleteAll: () => apiBangumi.deleteGroupTorrents(id),
-  };
-});
 </script>
 
 <template>
-  <div v-if="showTorrentRecords && pageProps" class="torrent-records-view">
-    <router-link :to="`/bangumi-torrents/${bangumiId}`" class="workbench-back">
-      ← 返回命名工作台
-    </router-link>
-    <AbTorrentListPage :key="`torrents-${bangumiId}`" v-bind="pageProps" />
-  </div>
   <EpisodeNamingWorkbench
-    v-else-if="bangumiId"
+    v-if="bangumiId"
     :key="bangumiId"
     :group-id="bangumiId"
   />
 </template>
-
-<style lang="scss" scoped>
-.torrent-records-view {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.workbench-back {
-  align-self: flex-start;
-  margin: 4px 12px 0;
-  color: var(--color-text-secondary);
-  text-decoration: none;
-}
-
-.workbench-back:hover {
-  color: var(--color-primary);
-}
-</style>
