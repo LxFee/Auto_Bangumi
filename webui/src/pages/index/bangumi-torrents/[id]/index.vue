@@ -44,14 +44,36 @@ const pageProps = computed(() => {
 </script>
 
 <template>
-  <AbTorrentListPage
-    v-if="showTorrentRecords && pageProps"
-    :key="`torrents-${bangumiId}`"
-    v-bind="pageProps"
-  />
+  <div v-if="showTorrentRecords && pageProps" class="torrent-records-view">
+    <router-link :to="`/bangumi-torrents/${bangumiId}`" class="workbench-back">
+      ← 返回命名工作台
+    </router-link>
+    <AbTorrentListPage :key="`torrents-${bangumiId}`" v-bind="pageProps" />
+  </div>
   <EpisodeNamingWorkbench
     v-else-if="bangumiId"
     :key="bangumiId"
     :group-id="bangumiId"
   />
 </template>
+
+<style lang="scss" scoped>
+.torrent-records-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workbench-back {
+  align-self: flex-start;
+  margin: 4px 12px 0;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.workbench-back:hover {
+  color: var(--color-primary);
+}
+</style>

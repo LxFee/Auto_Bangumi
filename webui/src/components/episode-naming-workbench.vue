@@ -553,9 +553,15 @@ watch(
 
 <style lang="scss" scoped>
 .workbench {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   max-width: 1180px;
   margin: 0 auto;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   color: var(--color-text);
 }
 
@@ -570,8 +576,15 @@ watch(
 }
 
 .heading {
+  flex-wrap: wrap;
   justify-content: space-between;
   margin-bottom: 18px;
+}
+
+.header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
 }
 
 .heading h1 {
@@ -828,10 +841,13 @@ button:disabled {
   }
 
   .heading {
+    flex-direction: column;
     align-items: flex-start;
   }
 
   .header-actions {
+    width: 100%;
+    margin-left: 0;
     flex-direction: column;
     align-items: stretch;
   }
