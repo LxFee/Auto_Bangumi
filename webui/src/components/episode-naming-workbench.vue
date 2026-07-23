@@ -29,7 +29,16 @@ const moveTargets = reactive<Record<number, number | null>>({});
 const allGroups = ref<BangumiGroupSummary[]>([]);
 
 const videos = computed(() =>
-  (detail.value?.plans ?? []).filter((item) => item.file_kind === 'video')
+  (detail.value?.plans ?? [])
+    .filter((item) => item.file_kind === 'video')
+    .slice()
+    .sort((left, right) => {
+      const leftEpisode = finalEpisode(left);
+      const rightEpisode = finalEpisode(right);
+      if (leftEpisode === null) return rightEpisode === null ? 0 : 1;
+      if (rightEpisode === null) return -1;
+      return leftEpisode - rightEpisode;
+    })
 );
 const unassociatedSubtitles = computed(() =>
   (detail.value?.plans ?? []).filter(
@@ -93,11 +102,25 @@ function status(plan: NamingPlan): '异常' | '手动' | '缺省' {
     : '缺省';
 }
 
-function effectiveEpisode(plan: NamingPlan): string {
-  const episode = Number(fields(plan).episode);
-  if (!Number.isFinite(episode)) return '—';
+function parsedEpisode(plan: NamingPlan): number | null {
+  const value = fields(plan).episode;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function finalEpisode(plan: NamingPlan): number | null {
+  const episode = parsedEpisode(plan);
+  if (episode === null) return null;
   const offset = sourceRule(plan)?.episode_offset ?? 0;
-  return String(episode + offset);
+  return episode + offset;
+}
+
+function effectiveEpisode(plan: NamingPlan): string {
+  return String(finalEpisode(plan) ?? '—');
 }
 
 function select(plan: NamingPlan) {

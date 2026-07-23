@@ -68,7 +68,11 @@ const plans = Array.from({ length: 6 }, (_, index) => {
   };
 });
 
-const detail = { group, rules: [rule], plans };
+const detail = {
+  group,
+  rules: [rule],
+  plans: [plans[0], plans[2], plans[1], plans[5], plans[4], plans[3]],
+};
 const summaries = [
   {
     group,
@@ -124,6 +128,14 @@ test('expanded editor actions remain reachable in every supported layout', async
     await page.goto('/#/bangumi-torrents/1');
 
     const workbench = page.locator('.workbench');
+    await expect(page.locator('.plan-row > strong')).toHaveText([
+      'E1',
+      'E2',
+      'E3',
+      'E4',
+      'E5',
+      'E—',
+    ]);
     await expect(
       page.getByRole('button', { name: '编辑番剧信息' })
     ).toBeInViewport({ ratio: 1 });
