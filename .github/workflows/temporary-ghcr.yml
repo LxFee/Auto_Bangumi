@@ -2,8 +2,8 @@ name: Temporary GHCR Image
 
 on:
   push:
-    branches:
-      - 3.3-dev-limil
+    tags:
+      - "3.3.5-limil.*"
 
 permissions:
   contents: read
@@ -15,7 +15,7 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/lxfee/auto_bangumi
-  IMAGE_TAG: 3.3.5-limil.1
+  IMAGE_TAG: ${{ github.ref_name }}
 
 jobs:
   build-webui:
