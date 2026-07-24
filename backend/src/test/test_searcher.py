@@ -3,6 +3,7 @@
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -117,6 +118,182 @@ class TestSearchUrlPerProviderParser:
             result = search_url("mikan", ["test"])
 
         assert result.parser == "tmdb"
+
+
+# ---------------------------------------------------------------------------
+# Mikan HTML catalogue search
+# ---------------------------------------------------------------------------
+
+
+class TestMikanCatalogueParser:
+    def test_build_search_url_uses_provider_origin_and_utf8_keyword(self):
+        from module.searcher.mikan import build_mikan_search_url
+
+        url = build_mikan_search_url(
+            "https://mirror.example/proxy/RSS/Search?searchstr=%s",
+            ["描绘", "生命"],
+        )
+
+        parsed = urlsplit(url)
+        assert parsed.path == "/proxy/Home/Search"
+        assert parse_qs(parsed.query) == {"searchstr": ["描绘 生命"]}
+
+    def test_search_results_are_bangumi_pages_and_are_deduplicated(self):
+        from module.searcher.mikan import parse_mikan_search_results
+
+        html = """
+        <ul class="an-ul">
+          <li>
+            <a href="/Home/Bangumi/3993">
+              <span data-src="/images/Bangumi/poster.jpg"></span>
+              <div class="an-text">描绘直至生命尽头</div>
+            </a>
+          </li>
+          <li><a href="/Home/Bangumi/3993"><div class="an-text">重复</div></a></li>
+        </ul>
+        """
+
+        results = parse_mikan_search_results(
+            html, "https://mikanani.me/Home/Search?searchstr=test"
+        )
+
+        assert len(results) == 1
+        assert results[0].bangumi_id == 3993
+        assert results[0].title == "描绘直至生命尽头"
+        assert results[0].page_url == "https://mikanani.me/Home/Bangumi/3993"
+        assert results[0].poster_url == (
+            "https://mikanani.me/images/Bangumi/poster.jpg"
+        )
+
+    def test_bangumi_page_exposes_one_exact_rss_per_subgroup(self):
+        from module.searcher.mikan import parse_mikan_bangumi_page
+
+        html = """
+        <div class="bangumi-poster"
+             style="background-image: url('/images/Bangumi/poster.jpg');"></div>
+        <p class="bangumi-title">描绘直至生命尽头
+          <a href="/RSS/Bangumi?bangumiId=3993"></a>
+        </p>
+        <p class="bangumi-info">放送开始：7/3/2026</p>
+        <div class="subgroup-text" id="615">
+          <a href="/Home/PublishGroup/392">Kirara Fantasia</a>
+          <a href="/RSS/Bangumi?bangumiId=3993&amp;subgroupid=615">RSS</a>
+        </div>
+        <div class="episode-table"><table><tbody><tr>
+          <td><a href="/Home/Episode/abc">[Group] Show - 01 [1080p]</a></td>
+          <td><a href="/Download/abc.torrent">下载</a></td>
+        </tr></tbody></table></div>
+        <div class="subgroup-text" id="370">
+          <a href="/Home/PublishGroup/1">LoliHouse</a>
+          <a href="/RSS/Bangumi?bangumiId=3993&amp;subgroupid=370">RSS</a>
+        </div>
+        <div class="episode-table"><table><tbody><tr>
+          <td><a href="/Home/Episode/def">[LoliHouse] Show - 01 [1080p]</a></td>
+          <td><a href="/Download/def.torrent">下载</a></td>
+        </tr></tbody></table></div>
+        """
+
+        page = parse_mikan_bangumi_page(
+            html,
+            "https://mikanani.me/Home/Bangumi/3993",
+            3993,
+        )
+
+        assert page.title == "描绘直至生命尽头"
+        assert page.year == "2026"
+        assert page.poster_url == ("https://mikanani.me/images/Bangumi/poster.jpg")
+        assert [(item.subgroup_id, item.name) for item in page.subgroups] == [
+            (615, "Kirara Fantasia"),
+            (370, "LoliHouse"),
+        ]
+        assert page.subgroups[0].rss_url == (
+            "https://mikanani.me/RSS/Bangumi?bangumiId=3993&subgroupid=615"
+        )
+        assert page.subgroups[0].torrents[0].homepage == (
+            "https://mikanani.me/Home/Episode/abc"
+        )
+
+
+class TestMikanCatalogueSearch:
+    async def test_mikan_variants_keep_exact_subgroup_rss_links(self):
+        from module.searcher.searcher import SearchTorrent
+        from test.factories import make_bangumi
+
+        search_html = """
+        <ul class="an-ul"><li>
+          <a href="/Home/Bangumi/3993">
+            <span data-src="/images/Bangumi/poster.jpg"></span>
+            <div class="an-text">描绘直至生命尽头</div>
+          </a>
+        </li></ul>
+        """
+        page_html = """
+        <p class="bangumi-title">描绘直至生命尽头</p>
+        <div class="subgroup-text" id="615">
+          <a href="/Home/PublishGroup/392">Kirara Fantasia</a>
+          <a href="/RSS/Bangumi?bangumiId=3993&amp;subgroupid=615">RSS</a>
+        </div>
+        <div class="episode-table"><table><tr>
+          <td><a href="/Home/Episode/abc">[Group] Show - 01 [1080p]</a></td>
+          <td><a href="/Download/abc.torrent">下载</a></td>
+        </tr></table></div>
+        <div class="subgroup-text" id="370">
+          <a href="/Home/PublishGroup/1">LoliHouse</a>
+          <a href="/RSS/Bangumi?bangumiId=3993&amp;subgroupid=370">RSS</a>
+        </div>
+        <div class="episode-table"><table><tr>
+          <td><a href="/Home/Episode/def">[LoliHouse] Show - 01 [1080p]</a></td>
+          <td><a href="/Download/def.torrent">下载</a></td>
+        </tr></table></div>
+        """
+
+        class FakeRequest:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get_html(self, url):
+                return page_html if "/Home/Bangumi/" in url else search_html
+
+        search = SearchTorrent()
+        search.analyser.torrent_to_data = AsyncMock(
+            side_effect=[
+                make_bangumi(group_name="raw-a"),
+                make_bangumi(group_name="raw-b"),
+            ]
+        )
+        search._fetch_tmdb_preview = AsyncMock(return_value=(None, None, None))
+
+        with (
+            patch(
+                "module.searcher.searcher.get_provider",
+                return_value={
+                    "mikan": {
+                        "url": "https://mikanani.me/RSS/Search?searchstr=%s",
+                        "parser": "mikan",
+                    }
+                },
+            ),
+            patch(
+                "module.searcher.searcher.RequestContent",
+                return_value=FakeRequest(),
+            ),
+        ):
+            results = [
+                json.loads(item)
+                async for item in search.analyse_keyword(["描绘"], site="mikan")
+            ]
+
+        assert [item["group_name"] for item in results] == [
+            "Kirara Fantasia",
+            "LoliHouse",
+        ]
+        assert [item["rss_link"] for item in results] == [
+            "https://mikanani.me/RSS/Bangumi?bangumiId=3993&subgroupid=615",
+            "https://mikanani.me/RSS/Bangumi?bangumiId=3993&subgroupid=370",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +465,9 @@ class TestSearchLocalization:
         ):
             results = [
                 json.loads(item)
-                async for item in search.analyse_keyword(["English", "Raw"])
+                async for item in search.analyse_keyword(
+                    ["English", "Raw"], site="nyaa"
+                )
             ]
 
         assert results[0]["official_title"] == "日本語タイトル"

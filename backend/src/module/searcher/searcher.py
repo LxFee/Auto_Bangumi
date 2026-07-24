@@ -1,14 +1,23 @@
 import json
 import logging
+import re
 from collections import OrderedDict
 from typing import TypeAlias
 
 from module.conf import settings
+from module.conf.search_provider import get_provider
 from module.models import Bangumi, Movie, RSSItem, Torrent
 from module.network import RequestContent
 from module.parser.analyser.tmdb_parser import tmdb_parser
 from module.rss import RSSAnalyser
 
+from .mikan import (
+    MikanBangumiPage,
+    MikanBangumiRef,
+    build_mikan_search_url,
+    parse_mikan_bangumi_page,
+    parse_mikan_search_results,
+)
 from .provider import search_url
 
 logger = logging.getLogger(__name__)
@@ -47,9 +56,7 @@ class SearchTorrent:
         async with RequestContent() as req:
             return await req.get_torrents(rss_item.url)
 
-    async def _fetch_tmdb_preview(
-        self, title: str
-    ) -> TMDBPreview:
+    async def _fetch_tmdb_preview(self, title: str) -> TMDBPreview:
         """Fetch localized title, year, and poster URL for search previews."""
         language = settings.rss_parser.language
         if title in _poster_cache and language in _poster_cache[title]:
@@ -82,9 +89,99 @@ class SearchTorrent:
         _, _, poster_link = await self._fetch_tmdb_preview(title)
         return poster_link
 
+    async def _enrich_search_preview(
+        self,
+        data: Bangumi | Movie,
+        title: str | None = None,
+        poster_link: str | None = None,
+        year: str | None = None,
+    ) -> None:
+        """Apply page metadata, then prefer the configured TMDB localization."""
+        if title:
+            data.official_title = re.sub(r"[/:.\\]", " ", title)
+        if poster_link:
+            data.poster_link = poster_link
+        if year and not data.year:
+            data.year = year  # type: ignore[assignment]
+
+        if not data.official_title:
+            return
+        tmdb_title, tmdb_year, tmdb_poster = await self._fetch_tmdb_preview(
+            data.official_title
+        )
+        if tmdb_title:
+            data.official_title = tmdb_title
+        if tmdb_year:
+            data.year = tmdb_year  # type: ignore[assignment]
+        if tmdb_poster and not data.poster_link:
+            data.poster_link = tmdb_poster
+
+    async def _mikan_subgroup_data(
+        self,
+        page: MikanBangumiPage,
+        ref: MikanBangumiRef,
+    ):
+        for subgroup in page.subgroups:
+            data = None
+            rss_item = RSSItem(
+                url=subgroup.rss_url,
+                aggregate=False,
+                parser="mikan",
+            )
+            for torrent in subgroup.torrents:
+                data = await self.analyser.torrent_to_data(
+                    torrent=torrent,
+                    rss=rss_item,
+                    fetch_poster=False,
+                )
+                if data is not None:
+                    break
+            if data is None:
+                continue
+
+            # These values come from the selected Mikan page/subgroup itself.
+            # In particular, never rebuild rss_link from release-title keywords.
+            data.rss_link = subgroup.rss_url
+            data.group_name = subgroup.name
+            await self._enrich_search_preview(
+                data,
+                title=page.title or ref.title,
+                poster_link=page.poster_url or ref.poster_url,
+                year=page.year,
+            )
+            yield data
+
+    async def _analyse_mikan_keyword(self, keywords: list[str], limit: int):
+        provider = get_provider().get("mikan")
+        if provider is None:
+            raise ValueError("Site mikan is not supported")
+        html_search_url = build_mikan_search_url(provider["url"], keywords)
+        emitted = 0
+
+        async with RequestContent() as req:
+            search_content = await req.get_html(html_search_url)
+            refs = parse_mikan_search_results(search_content, html_search_url)
+            for ref in refs:
+                page_content = await req.get_html(ref.page_url)
+                page = parse_mikan_bangumi_page(
+                    page_content,
+                    ref.page_url,
+                    ref.bangumi_id,
+                )
+                async for data in self._mikan_subgroup_data(page, ref):
+                    yield json.dumps(data.dict(), separators=(",", ":"))
+                    emitted += 1
+                    if emitted >= limit:
+                        return
+
     async def analyse_keyword(
         self, keywords: list[str], site: str = "mikan", limit: int = 100
     ):
+        if site == "mikan":
+            async for item in self._analyse_mikan_keyword(keywords, limit):
+                yield item
+            return
+
         rss_item = search_url(site, keywords)
         torrents = await self.search_torrents(rss_item)
         # yield for EventSourceResponse (Server Send)
@@ -105,16 +202,7 @@ class SearchTorrent:
                     bangumi.rss_link = special_link
                     exist_list.append(special_link)
                     # Fetch localized title and poster URL from TMDB if available.
-                    if bangumi.official_title:
-                        tmdb_title, tmdb_year, tmdb_poster = (
-                            await self._fetch_tmdb_preview(bangumi.official_title)
-                        )
-                        if tmdb_title:
-                            bangumi.official_title = tmdb_title
-                        if tmdb_year:
-                            bangumi.year = tmdb_year
-                        if not bangumi.poster_link and tmdb_poster:
-                            bangumi.poster_link = tmdb_poster
+                    await self._enrich_search_preview(bangumi)
                     yield json.dumps(bangumi.dict(), separators=(",", ":"))
 
     @staticmethod

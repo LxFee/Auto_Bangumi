@@ -15,7 +15,14 @@ The search bar is located in the AB top bar. Click to open the search panel.
 Select the source site, enter keywords, and AB will automatically parse and display search results. To add an anime, click the add button on the right side of the card.
 
 ::: tip
-When the source is **Mikan**, AB uses the `mikan` parser by default. For other sources, the TMDB parser is used.
+For **Mikan**, AB first searches Mikan's anime catalogue and then reads the
+subtitle groups from each anime page. Every result chip represents one subtitle
+group, and subscribing uses Mikan's exact anime RSS URL, such as
+`/RSS/Bangumi?bangumiId=3993&subgroupid=615`, instead of rebuilding a keyword
+search RSS URL from the chip text.
+
+Other sources continue to use their configured RSS search templates and
+parsers.
 :::
 
 ## Managing Search Sources
